@@ -1,0 +1,6 @@
+node_modules
+dist
+dist-pages
+.env
+.DS_Store
+agent-browser-screenshot.png

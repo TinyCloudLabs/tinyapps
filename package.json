@@ -1,0 +1,36 @@
+{
+  "name": "tinyapps",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:site": "vite --config vite.site.config.js --host 127.0.0.1 --port 5172",
+    "build:site": "vite build --config vite.site.config.js",
+    "preview:site": "vite preview --config vite.site.config.js --host 127.0.0.1 --port 4172",
+    "dev:food": "npm run dev --workspace @tinyapps/food-tracker",
+    "dev:pain": "npm run dev --workspace @tinyapps/pain-tracker",
+    "dev:insight": "npm run dev --workspace @tinyapps/insight",
+    "build:food": "npm run build --workspace @tinyapps/food-tracker",
+    "build:pain": "npm run build --workspace @tinyapps/pain-tracker",
+    "build:insight": "npm run build --workspace @tinyapps/insight",
+    "build": "npm run build:site && npm run build --workspaces --if-present",
+    "test": "node packages/appkit/test/smoke.mjs"
+  },
+  "dependencies": {
+    "@openkey/sdk": "0.8.4",
+    "@tinycloud/sdk-core": "^2.1.0-beta.5",
+    "@tinycloud/web-sdk": "2.1.0-beta.5",
+    "@vitejs/plugin-react": "^5.0.4",
+    "dotenv": "^17.2.3",
+    "ethers": "^5.8.0",
+    "express": "^5.1.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "vite": "^7.1.12"
+  }
+}

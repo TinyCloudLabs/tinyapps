@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Overview of the TinyApps interoperable app demo: Food Tracker, Pain Tracker, and Insight."
+    />
+    <title>TinyApps Overview</title>
+    <link rel="stylesheet" href="/assets/site.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="TinyApps home">
+        <span class="brand-mark">ta</span>
+        <span>TinyApps</span>
+      </a>
+      <nav class="top-nav" aria-label="Main navigation">
+        <a aria-current="page" href="/overview/">Overview</a>
+        <a href="/food/">Food</a>
+        <a href="/pain/">Pain</a>
+        <a href="/insight/">Insight</a>
+        <a href="https://github.com/TinyCloudLabs/tinyapps">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="overview-hero">
+        <p class="eyebrow">Demo overview</p>
+        <h1>Three independent apps sharing one user-owned application space.</h1>
+        <p>
+          Food Tracker and Pain Tracker write their own records under separate
+          app prefixes. Insight discovers their manifests, requests compatible
+          read access, and correlates meals with later pain events.
+        </p>
+      </section>
+
+      <section class="flow-section" aria-labelledby="flow-title">
+        <div class="section-heading">
+          <p class="eyebrow">How it works</p>
+          <h2 id="flow-title">A complete interoperability loop.</h2>
+        </div>
+
+        <div class="flow-grid">
+          <article class="flow-card food">
+            <div class="flow-card-head">
+              <span class="app-dot"></span>
+              <h3>Food Tracker</h3>
+            </div>
+            <p>Logs meals, ingredients, optional notes, and photos.</p>
+            <dl>
+              <div>
+                <dt>Writes</dt>
+                <dd><code>xyz.tinycloud.tinyapps.food/records/meals/</code></dd>
+              </div>
+              <div>
+                <dt>Manifest</dt>
+                <dd><code>xyz.tinycloud.tinyapps.food/manifest.json</code></dd>
+              </div>
+            </dl>
+            <a class="text-link" href="/food/">Open Food Tracker</a>
+          </article>
+
+          <article class="flow-card pain">
+            <div class="flow-card-head">
+              <span class="app-dot"></span>
+              <h3>Pain Tracker</h3>
+            </div>
+            <p>Logs severity, location, quality, duration, and notes.</p>
+            <dl>
+              <div>
+                <dt>Writes</dt>
+                <dd><code>xyz.tinycloud.tinyapps.pain/records/events/</code></dd>
+              </div>
+              <div>
+                <dt>Manifest</dt>
+                <dd><code>xyz.tinycloud.tinyapps.pain/manifest.json</code></dd>
+              </div>
+            </dl>
+            <a class="text-link" href="/pain/">Open Pain Tracker</a>
+          </article>
+
+          <article class="flow-card insight">
+            <div class="flow-card-head">
+              <span class="app-dot"></span>
+              <h3>Insight</h3>
+            </div>
+            <p>Lists manifests, reads declared datasets, and shows patterns.</p>
+            <dl>
+              <div>
+                <dt>Reads</dt>
+                <dd><code>applications</code> manifests and compatible records</dd>
+              </div>
+              <div>
+                <dt>Output</dt>
+                <dd>Meal and pain timing correlations, never diagnosis.</dd>
+              </div>
+            </dl>
+            <a class="text-link" href="/insight/">Open Insight</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="sequence-section" aria-labelledby="sequence-title">
+        <div>
+          <p class="eyebrow">Try the demo</p>
+          <h2 id="sequence-title">Run the apps in order.</h2>
+        </div>
+        <ol class="sequence-list">
+          <li>
+            <span>1</span>
+            <p>Capture or manually enter a meal in <a href="/food/">Food Tracker</a>.</p>
+          </li>
+          <li>
+            <span>2</span>
+            <p>Log any later symptoms in <a href="/pain/">Pain Tracker</a>.</p>
+          </li>
+          <li>
+            <span>3</span>
+            <p>Open <a href="/insight/">Insight</a> to inspect discovered manifests and timing patterns.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="resource-section" aria-label="Project resources">
+        <a href="https://github.com/TinyCloudLabs/tinyapps">Repository</a>
+        <a href="https://github.com/TinyCloudLabs/tinyapps/blob/main/SPEC.md">Specification</a>
+        <a href="/">Landing page</a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>TinyApps</span>
+      <a href="/">Home</a>
+      <a href="https://github.com/TinyCloudLabs/tinyapps/blob/main/SPEC.md">Spec</a>
+    </footer>
+  </body>
+</html>
