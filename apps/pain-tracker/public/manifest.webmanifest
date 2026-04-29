@@ -1,0 +1,24 @@
+{
+  "name": "Pain Tracker",
+  "short_name": "Pain",
+  "description": "Log pain events to your TinyCloud applications space.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5edf8",
+  "theme_color": "#f5edf8",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
