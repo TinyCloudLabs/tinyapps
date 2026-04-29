@@ -29,14 +29,11 @@ Default dev ports:
 
 ## Anthropic Key
 
-Food photo interpretation is served through the Food Tracker app's `/api/analyze-food` route. On Cloudflare Pages, that route is implemented by `functions/api/analyze-food.js`.
+Food photo interpretation is served through the Food Tracker app's `/api/analyze-food` route during local development.
 
-For local development, either:
+Open Food Tracker settings and store your Anthropic API key in your TinyCloud `secrets` space. The app reads that user-owned key and sends it with photo interpretation requests.
 
-- set `ANTHROPIC_API_KEY` in `.env`, or
-- open Food Tracker settings and store the key in your TinyCloud `secrets` space.
-
-No real API key should be committed. Without a key, Sonnet photo interpretation is unavailable; users can still enter meals manually.
+No shared Anthropic key is used, and no real API key should be committed. Without a user-provided key, Sonnet photo interpretation is unavailable; users can still enter meals manually.
 
 ## Cloudflare Pages
 
@@ -53,10 +50,9 @@ The app targets are single-page apps. TinyCloud provides identity, manifests,
 and user-owned storage, so the apps do not need an app database or app backend
 for their core data flows.
 
-Food photo interpretation is the only backend-shaped concern: a shared
-Anthropic key should not be bundled into a browser app. The local Food dev
-server provides `/api/analyze-food`; deployed SPA-only builds can still log
-meals manually and can store a user-provided key in TinyCloud `secrets`.
+Food photo interpretation is the only backend-shaped concern. The local Food
+dev server provides `/api/analyze-food` and only accepts the user's key from
+TinyCloud `secrets`; deployed SPA-only builds can still log meals manually.
 
 ## Spec
 

@@ -1,6 +1,6 @@
 export async function analyzeFoodHandler(req, res) {
   try {
-    const apiKey = cleanString(req.body?.apiKey) || process.env.ANTHROPIC_API_KEY;
+    const apiKey = cleanString(req.body?.apiKey);
     const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514";
     const image = cleanString(req.body?.image);
 
