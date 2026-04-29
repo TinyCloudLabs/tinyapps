@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="TinyApps is a set of independent TinyCloud apps that publish manifests and interoperate through user-owned data spaces."
+    />
+    <title>TinyApps | Interoperable TinyCloud Apps</title>
+    <link rel="stylesheet" href="/assets/site.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="TinyApps home">
+        <span class="brand-mark">ta</span>
+        <span>TinyApps</span>
+      </a>
+      <nav class="top-nav" aria-label="Main navigation">
+        <a href="/overview/">Overview</a>
+        <a href="/food/">Food</a>
+        <a href="/pain/">Pain</a>
+        <a href="/insight/">Insight</a>
+        <a href="https://github.com/TinyCloudLabs/tinyapps">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero-section">
+        <div class="hero-copy">
+          <p class="eyebrow">Anatomy of interoperable apps</p>
+          <h1>Independent health apps, connected by user-owned data.</h1>
+          <p class="hero-lede">
+            TinyApps demonstrates how separate apps can publish manifests, write
+            to their own TinyCloud prefixes, and let another app discover useful
+            patterns without a shared backend.
+          </p>
+          <div class="hero-actions" aria-label="Primary actions">
+            <a class="button primary" href="/overview/">View interoperable apps demo</a>
+            <a class="button secondary" href="https://github.com/TinyCloudLabs/tinyapps/blob/main/SPEC.md">Read the spec</a>
+          </div>
+        </div>
+
+        <div class="demo-map" aria-label="TinyApps interoperability diagram">
+          <div class="phone-shell">
+            <div class="phone-status"></div>
+            <div class="app-row food">
+              <span class="app-dot"></span>
+              <div>
+                <strong>Food Tracker</strong>
+                <small>meals, photos, ingredients</small>
+              </div>
+            </div>
+            <div class="app-row pain">
+              <span class="app-dot"></span>
+              <div>
+                <strong>Pain Tracker</strong>
+                <small>severity, location, notes</small>
+              </div>
+            </div>
+            <div class="connector-line"></div>
+            <div class="app-row insight">
+              <span class="app-dot"></span>
+              <div>
+                <strong>Insight</strong>
+                <small>manifest discovery and patterns</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="principles-section" aria-labelledby="principles-title">
+        <div class="section-heading">
+          <p class="eyebrow">The model</p>
+          <h2 id="principles-title">Small contracts make apps composable.</h2>
+        </div>
+        <div class="principle-grid">
+          <article>
+            <span>01</span>
+            <h3>Identity</h3>
+            <p>One OpenKey session can authorize each independent app.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Place</h3>
+            <p>Data lives in the user's TinyCloud <code>applications</code> space.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Contract</h3>
+            <p>Each app publishes a manifest describing its paths and permissions.</p>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>Discovery</h3>
+            <p>Insight reads manifests and builds a pattern view from declared datasets.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="apps-strip" aria-label="TinyApps links">
+        <a class="app-link food" href="/food/">
+          <span>Food Tracker</span>
+          <small>Capture meals</small>
+        </a>
+        <a class="app-link pain" href="/pain/">
+          <span>Pain Tracker</span>
+          <small>Log symptoms</small>
+        </a>
+        <a class="app-link insight" href="/insight/">
+          <span>Insight</span>
+          <small>Find patterns</small>
+        </a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>TinyApps</span>
+      <a href="/overview/">Overview</a>
+      <a href="https://github.com/TinyCloudLabs/tinyapps">Repository</a>
+    </footer>
+  </body>
+</html>
