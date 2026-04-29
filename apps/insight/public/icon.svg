@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Concept generated with Arrow by QuiverAI, normalized for app icon use. -->
+  <rect width="512" height="512" rx="112" fill="#FCFBF0"/>
+  <path d="M72 330c54-60 90-96 132-96 36 0 58 25 83 52 31 34 60 56 104 56 28 0 55-11 81-34" fill="none" stroke="#6DB575" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M263 296c34 36 61 55 96 55 37 0 70-22 109-68" fill="none" stroke="#5EB2F3" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M76 414 235 255c13-13 34-13 47 0l24 24L442 143" fill="none" stroke="#252E31" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M324 95c8 43 20 55 63 63-43 8-55 20-63 63-8-43-20-55-63-63 43-8 55-20 63-63z" fill="#252E31"/>
+</svg>
