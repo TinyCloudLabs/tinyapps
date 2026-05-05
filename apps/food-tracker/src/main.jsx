@@ -273,7 +273,9 @@ function FoodSettings({ tcw }) {
       <div className="card stack">
         <div>
           <strong>Anthropic API key</strong>
-          <p style={{ color: "var(--ink-mute)", marginBottom: 0 }}>Stored as `ANTHROPIC_API_KEY` in your TinyCloud secrets vault.</p>
+          <p style={{ color: "var(--ink-mute)", marginBottom: 0 }}>
+            Stored as <code>ANTHROPIC_API_KEY</code> in your <a href="https://secrets.tinycloud.xyz" target="_blank" rel="noreferrer">TinyCloud secrets vault</a>.
+          </p>
         </div>
         <input className="input" type="password" value={value} onChange={(event) => setValue(event.target.value)} placeholder="sk-ant-..." />
         <button className="primary-btn" onClick={async () => {

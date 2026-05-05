@@ -9,21 +9,6 @@ const DEFAULT_HOST = "https://node.tinycloud.xyz";
 const DEFAULT_OPENKEY_HOST = "https://openkey.so";
 const secretsSigners = new WeakMap();
 
-class OpenKeyVaultSigner {
-  constructor(openkey, keyId) {
-    this.openkey = openkey;
-    this.keyId = keyId;
-  }
-
-  async signMessage(message) {
-    const result = await this.openkey.signMessage({
-      message,
-      keyId: this.keyId,
-    });
-    return result.signature;
-  }
-}
-
 export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   const host = options.host || import.meta.env.VITE_TINYCLOUD_HOST || DEFAULT_HOST;
   const openKeyHost = options.openKeyHost || import.meta.env.VITE_OPENKEY_HOST || DEFAULT_OPENKEY_HOST;
@@ -48,7 +33,7 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     },
   });
   const session = await tcw.signIn();
-  secretsSigners.set(tcw, new OpenKeyVaultSigner(openkey, authResult.keyId));
+  secretsSigners.set(tcw, web3Provider.getSigner());
   await publishManifest(tcw, manifest);
   return {
     tcw,
