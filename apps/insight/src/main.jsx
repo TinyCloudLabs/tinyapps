@@ -58,7 +58,7 @@ function InsightApp() {
       <AppShell app="insight">
         <SignInScreen
           appName="Insight"
-          appId={INSIGHT_MANIFEST.id}
+          appId={INSIGHT_MANIFEST.app_id}
           onSignIn={auth.signIn}
           signingIn={auth.signingIn}
           error={auth.error}
@@ -101,12 +101,12 @@ function InsightApp() {
         ) : (
           <div className="stack">
             {manifests.map((manifest) => (
-              <article className="card" key={manifest.id}>
+              <article className="card" key={manifest.app_id}>
                 <div className="row">
                   <strong>{manifest.name}</strong>
                   <code style={{ color: "var(--ink-mute)", fontSize: 11 }}>{manifest["x-tinyapp"]?.registry?.space}</code>
                 </div>
-                <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-mute)", overflowWrap: "anywhere" }}>{manifest.id}/manifest.json</div>
+                <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--ink-mute)", overflowWrap: "anywhere" }}>{manifest.app_id}/manifest.json</div>
               </article>
             ))}
           </div>

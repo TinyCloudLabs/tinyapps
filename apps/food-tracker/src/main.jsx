@@ -57,7 +57,7 @@ function FoodApp() {
       <AppShell app="food">
         <SignInScreen
           appName="Food Tracker"
-          appId={FOOD_MANIFEST.id}
+          appId={FOOD_MANIFEST.app_id}
           onSignIn={auth.signIn}
           signingIn={auth.signingIn}
           error={auth.error}
@@ -273,10 +273,17 @@ function FoodSettings({ tcw }) {
       <div className="card stack">
         <div>
           <strong>Anthropic API key</strong>
-          <p style={{ color: "var(--ink-mute)", marginBottom: 0 }}>Stored in your TinyCloud `secrets` space at `secrets/anthropic-api-key`.</p>
+          <p style={{ color: "var(--ink-mute)", marginBottom: 0 }}>Stored as `ANTHROPIC_API_KEY` in your TinyCloud secrets vault.</p>
         </div>
         <input className="input" type="password" value={value} onChange={(event) => setValue(event.target.value)} placeholder="sk-ant-..." />
-        <button className="primary-btn" onClick={async () => { await setAnthropicApiKey(tcw, value); setStatus("Saved"); }}>Save key</button>
+        <button className="primary-btn" onClick={async () => {
+          try {
+            await setAnthropicApiKey(tcw, value);
+            setStatus(value.trim() ? "Saved" : "Deleted");
+          } catch (err) {
+            setStatus(err instanceof Error ? err.message : String(err));
+          }
+        }}>Save key</button>
         {status && <div className="notice">{status}</div>}
       </div>
     </main>

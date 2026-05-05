@@ -5,24 +5,16 @@ export const APP_IDS = {
 };
 
 export const SPACE_APPLICATIONS = "applications";
-export const SPACE_SECRETS = "secrets";
+export const ANTHROPIC_SECRET_NAME = "ANTHROPIC_API_KEY";
 
 export const FOOD_MANIFEST = {
-  version: 1,
-  id: APP_IDS.food,
+  manifest_version: 1,
+  app_id: APP_IDS.food,
   name: "Food Tracker",
   description: "Logs meals, ingredients, and photos in the user's TinyCloud applications space.",
   prefix: APP_IDS.food,
   defaults: true,
-  permissions: [
-    {
-      service: "tinycloud.kv",
-      space: SPACE_SECRETS,
-      path: "secrets/anthropic-api-key",
-      actions: ["get", "put", "del", "metadata"],
-      skipPrefix: true,
-    },
-  ],
+  secrets: { [ANTHROPIC_SECRET_NAME]: true },
   "x-tinyapp": {
     registry: { space: SPACE_APPLICATIONS, path: `${APP_IDS.food}/manifest.json` },
     produces: [
@@ -52,15 +44,15 @@ export const FOOD_MANIFEST = {
         name: "Anthropic Messages API",
         model: "claude-sonnet-4-20250514",
         purpose: "Interpret food photos into editable meal records.",
-        secret: "secrets/anthropic-api-key",
+        secret: ANTHROPIC_SECRET_NAME,
       },
     ],
   },
 };
 
 export const PAIN_MANIFEST = {
-  version: 1,
-  id: APP_IDS.pain,
+  manifest_version: 1,
+  app_id: APP_IDS.pain,
   name: "Pain Tracker",
   description: "Logs pain events in the user's TinyCloud applications space.",
   prefix: APP_IDS.pain,
@@ -91,8 +83,8 @@ export const PAIN_MANIFEST = {
 };
 
 export const INSIGHT_MANIFEST = {
-  version: 1,
-  id: APP_IDS.insight,
+  manifest_version: 1,
+  app_id: APP_IDS.insight,
   name: "Food × Pain Insight",
   description: "Discovers TinyApps manifests and correlates meals with pain events.",
   prefix: APP_IDS.insight,
@@ -126,13 +118,13 @@ export const MANIFESTS = {
 
 export function resolveManifestPath(manifest, path, skipPrefix = false) {
   if (skipPrefix || manifest.prefix === "") return path;
-  const prefix = manifest.prefix || manifest.id;
+  const prefix = manifest.prefix || manifest.app_id;
   if (path === "/") return `${prefix}/`;
   return path.startsWith("/") ? `${prefix}${path}` : `${prefix}/${path}`;
 }
 
 export function registryPathFor(manifest) {
-  return `${manifest.id}/manifest.json`;
+  return `${manifest.app_id}/manifest.json`;
 }
 
 export function recordsPrefix(appId, recordKind) {

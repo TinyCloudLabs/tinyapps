@@ -22,8 +22,8 @@
   },
   "dependencies": {
     "@openkey/sdk": "0.8.4",
-    "@tinycloud/sdk-core": "^2.1.0-beta.5",
-    "@tinycloud/web-sdk": "2.1.0-beta.5",
+    "@tinycloud/sdk-core": "2.2.0-beta.7",
+    "@tinycloud/web-sdk": "2.2.0-beta.7",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
     "ethers": "^5.8.0",

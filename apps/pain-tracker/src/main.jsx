@@ -50,7 +50,7 @@ function PainApp() {
       <AppShell app="pain">
         <SignInScreen
           appName="Pain Tracker"
-          appId={PAIN_MANIFEST.id}
+          appId={PAIN_MANIFEST.app_id}
           onSignIn={auth.signIn}
           signingIn={auth.signingIn}
           error={auth.error}
