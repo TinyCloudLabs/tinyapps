@@ -3,10 +3,11 @@ import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sd
 import { providers } from "ethers";
 
 import { normalizeStoredRecord } from "./analysis.js";
-import { SPACE_APPLICATIONS, SPACE_SECRETS, registryPathFor } from "./manifests.js";
+import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, registryPathFor } from "./manifests.js";
 
 const DEFAULT_HOST = "https://node.tinycloud.xyz";
 const DEFAULT_OPENKEY_HOST = "https://openkey.so";
+const secretsSigners = new WeakMap();
 
 export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   const host = options.host || import.meta.env.VITE_TINYCLOUD_HOST || DEFAULT_HOST;
@@ -32,6 +33,7 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     },
   });
   const session = await tcw.signIn();
+  secretsSigners.set(tcw, web3Provider.getSigner());
   await publishManifest(tcw, manifest);
   return {
     tcw,
@@ -47,7 +49,7 @@ export async function publishManifest(tcw, manifest) {
     ...manifest,
     publishedAt: new Date().toISOString(),
   });
-  return unwrap(result, `publish ${manifest.id} manifest`);
+  return unwrap(result, `publish ${manifest.app_id} manifest`);
 }
 
 export async function listPublishedManifests(tcw) {
@@ -57,7 +59,7 @@ export async function listPublishedManifests(tcw) {
   for (const key of keys) {
     const entry = unwrap(await applicationsKV(tcw).get(key), `read ${key}`);
     const manifest = kvValue(entry);
-    if (manifest?.id) manifests.set(manifest.id, manifest);
+    if (manifest?.app_id) manifests.set(manifest.app_id, manifest);
   }
   return [...manifests.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -95,7 +97,8 @@ export async function putPhoto(tcw, appId, id, photo) {
 }
 
 export async function getAnthropicApiKey(tcw) {
-  const result = await secretsKV(tcw).get("secrets/anthropic-api-key");
+  await unlockSecrets(tcw);
+  const result = await tcw.secrets.get(ANTHROPIC_SECRET_NAME);
   if (!result.ok) return "";
   const value = kvValue(result.data);
   return typeof value === "string" ? value : "";
@@ -103,26 +106,28 @@ export async function getAnthropicApiKey(tcw) {
 
 export async function setAnthropicApiKey(tcw, apiKey) {
   const trimmed = apiKey.trim();
+  await unlockSecrets(tcw);
   if (!trimmed) {
-    const result = await secretsKV(tcw).delete("secrets/anthropic-api-key");
-    if (!result.ok) return undefined;
-    return undefined;
+    return unwrap(await tcw.secrets.delete(ANTHROPIC_SECRET_NAME), "delete Anthropic API key");
   }
-  return unwrap(await secretsKV(tcw).put("secrets/anthropic-api-key", trimmed), "store Anthropic API key");
+  return unwrap(await tcw.secrets.put(ANTHROPIC_SECRET_NAME, trimmed), "store Anthropic API key");
 }
 
 export function applicationsKV(tcw) {
   return tcw.space(SPACE_APPLICATIONS).kv;
 }
 
-export function secretsKV(tcw) {
-  return tcw.space(SPACE_SECRETS).kv;
-}
-
 export function unwrap(result, label) {
   if (result?.ok) return result.data;
   const message = result?.error?.message || result?.error?.code || "unknown TinyCloud error";
   throw new Error(`${label} failed: ${message}`);
+}
+
+async function unlockSecrets(tcw) {
+  if (!tcw.secrets) {
+    throw new Error("TinyCloud secrets wrapper is unavailable in this SDK build");
+  }
+  return unwrap(await tcw.secrets.unlock(secretsSigners.get(tcw)), "unlock secrets");
 }
 
 function kvValue(entry) {

@@ -31,7 +31,7 @@ Default dev ports:
 
 Food photo interpretation is served through the Food Tracker app's `/api/analyze-food` route during local development.
 
-Open Food Tracker settings and store your Anthropic API key in your TinyCloud `secrets` space. The app reads that user-owned key and sends it with photo interpretation requests.
+Open Food Tracker settings and store your Anthropic API key as `ANTHROPIC_API_KEY` in your TinyCloud secrets vault. The manifest declares read access; saving or deleting the key asks TinyCloud for the extra write/delete permission at runtime.
 
 No shared Anthropic key is used, and no real API key should be committed. Without a user-provided key, Sonnet photo interpretation is unavailable; users can still enter meals manually.
 
@@ -51,8 +51,9 @@ and user-owned storage, so the apps do not need an app database or app backend
 for their core data flows.
 
 Food photo interpretation is the only backend-shaped concern. The local Food
-dev server provides `/api/analyze-food` and only accepts the user's key from
-TinyCloud `secrets`; deployed SPA-only builds can still log meals manually.
+dev server provides `/api/analyze-food` and only accepts the user's
+`ANTHROPIC_API_KEY` secret; deployed SPA-only builds can still log meals
+manually.
 
 ## Spec
 

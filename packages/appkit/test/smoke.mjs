@@ -4,6 +4,7 @@ import { resolveManifest } from "@tinycloud/sdk-core";
 
 import { analyzeCorrelations, fmtDay, fmtTime, normalizeMealDraft, normalizeStoredRecord } from "../src/analysis.js";
 import {
+  ANTHROPIC_SECRET_NAME,
   APP_IDS,
   FOOD_MANIFEST,
   INSIGHT_MANIFEST,
@@ -16,11 +17,20 @@ import {
 assert.equal(resolveManifestPath(FOOD_MANIFEST, "records/meals/"), `${APP_IDS.food}/records/meals/`);
 assert.equal(resolveManifestPath(PAIN_MANIFEST, "records/events/"), `${APP_IDS.pain}/records/events/`);
 assert.equal(recordsPrefix(APP_IDS.food, "meal"), `${APP_IDS.food}/records/meals/`);
+assert.equal(FOOD_MANIFEST.app_id, APP_IDS.food);
+assert.equal(PAIN_MANIFEST.app_id, APP_IDS.pain);
+assert.equal(INSIGHT_MANIFEST.app_id, APP_IDS.insight);
 assert.equal(FOOD_MANIFEST.defaults, true);
 assert.equal(PAIN_MANIFEST.defaults, true);
 assert.equal(INSIGHT_MANIFEST.defaults, true);
+assert.deepEqual(FOOD_MANIFEST.secrets, { [ANTHROPIC_SECRET_NAME]: true });
+assert.equal(FOOD_MANIFEST.permissions, undefined);
+assert.equal(FOOD_MANIFEST["x-tinyapp"].externalServices[0].secret, ANTHROPIC_SECRET_NAME);
 assert.equal(INSIGHT_MANIFEST.permissions.some((permission) => permission.path === "" && permission.space === SPACE_APPLICATIONS), true);
-assert.equal(resolveManifest(FOOD_MANIFEST).resources.some((permission) => permission.path === `${APP_IDS.food}/`), true);
+const foodResources = resolveManifest(FOOD_MANIFEST).resources;
+assert.equal(foodResources.some((permission) => permission.path === `${APP_IDS.food}/`), true);
+assert.equal(foodResources.some((permission) => permission.path === `keys/secrets/${ANTHROPIC_SECRET_NAME}`), true);
+assert.equal(foodResources.some((permission) => permission.path === `vault/secrets/${ANTHROPIC_SECRET_NAME}`), true);
 assert.equal(resolveManifest(PAIN_MANIFEST).resources.some((permission) => permission.path === `${APP_IDS.pain}/`), true);
 
 const result = analyzeCorrelations(

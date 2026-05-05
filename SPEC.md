@@ -12,7 +12,7 @@ The apps should demonstrate the anatomy of interoperable apps:
 
 - Identity: one OpenKey session across all apps.
 - Place: the user-owned TinyCloud `applications` space.
-- Contract: each app manifest declares what it reads and writes.
+- Contract: each app manifest declares steady-state reads; writes outside default scope are runtime permission escalations.
 - Discovery: manifests published in the `applications` space tell agents what datasets exist.
 
 ## Registry Convention
@@ -58,17 +58,18 @@ xyz.tinycloud.tinyapps.insight
 
 The core fields follow the current TinyCloud manifest type:
 
-- `id`
+- `app_id`
 - `name`
 - `description`
 - `prefix`
 - `defaults`
 - `permissions`
+- `secrets`
 - optional extension metadata under `x-tinyapp`
 
 The extension is intentionally ignored by the SDK and consumed by agents/apps.
 
-`defaults: true` grants the app its own manifest-scoped data under `{appId}/` in the `applications` space. Explicit permissions are only for data outside that default app scope, such as secrets or cross-app reads.
+`defaults: true` grants the app its own manifest-scoped data under `{appId}/` in the `applications` space. Explicit permissions are only for data outside that default app scope, such as cross-app reads. Secret manifest entries default to read; saving or deleting a secret relies on SDK permission escalation.
 
 ## Food Tracker
 
@@ -80,15 +81,15 @@ Let a user quickly capture what they ate, ideally from a photo. The app uses Cla
 
 ```json
 {
-  "version": 1,
-  "id": "xyz.tinycloud.tinyapps.food",
+  "manifest_version": 1,
+  "app_id": "xyz.tinycloud.tinyapps.food",
   "name": "Food Tracker",
   "description": "Logs meals, ingredients, and photos in the user's TinyCloud applications space.",
   "prefix": "xyz.tinycloud.tinyapps.food",
   "defaults": true,
-  "permissions": [
-    { "service": "tinycloud.kv", "space": "secrets", "path": "secrets/anthropic-api-key", "actions": ["get", "put", "del", "metadata"], "skipPrefix": true }
-  ]
+  "secrets": {
+    "ANTHROPIC_API_KEY": true
+  }
 }
 ```
 
@@ -113,7 +114,7 @@ Each meal record contains `id`, `ts`, `title`, `emoji`, `ingredients`, `portion`
 
 The browser sends a base64 image to `/api/analyze-food`. The server reads the API key from:
 
-1. request-provided key from the user's TinyCloud `secrets` space, or
+1. request-provided `ANTHROPIC_API_KEY` from the user's TinyCloud secrets vault, or
 2. `ANTHROPIC_API_KEY` environment variable.
 
 Model default:
@@ -147,8 +148,8 @@ Let a user log pain quickly: severity, where it hurts, what it feels like, durat
 
 ```json
 {
-  "version": 1,
-  "id": "xyz.tinycloud.tinyapps.pain",
+  "manifest_version": 1,
+  "app_id": "xyz.tinycloud.tinyapps.pain",
   "name": "Pain Tracker",
   "description": "Logs pain events in the user's TinyCloud applications space.",
   "prefix": "xyz.tinycloud.tinyapps.pain",
@@ -184,8 +185,8 @@ Demonstrate agent-level interoperability. Insight does not own food or pain data
 
 ```json
 {
-  "version": 1,
-  "id": "xyz.tinycloud.tinyapps.insight",
+  "manifest_version": 1,
+  "app_id": "xyz.tinycloud.tinyapps.insight",
   "name": "Food × Pain Insight",
   "description": "Discovers TinyApps manifests and correlates meals with pain events.",
   "prefix": "xyz.tinycloud.tinyapps.insight",
