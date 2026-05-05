@@ -27,7 +27,10 @@ assert.deepEqual(FOOD_MANIFEST.secrets, { [ANTHROPIC_SECRET_NAME]: true });
 assert.equal(FOOD_MANIFEST.permissions, undefined);
 assert.equal(FOOD_MANIFEST["x-tinyapp"].externalServices[0].secret, ANTHROPIC_SECRET_NAME);
 assert.equal(INSIGHT_MANIFEST.permissions.some((permission) => permission.path === "" && permission.space === SPACE_APPLICATIONS), true);
-assert.equal(resolveManifest(FOOD_MANIFEST).resources.some((permission) => permission.path === `${APP_IDS.food}/`), true);
+const foodResources = resolveManifest(FOOD_MANIFEST).resources;
+assert.equal(foodResources.some((permission) => permission.path === `${APP_IDS.food}/`), true);
+assert.equal(foodResources.some((permission) => permission.path === `keys/secrets/${ANTHROPIC_SECRET_NAME}`), true);
+assert.equal(foodResources.some((permission) => permission.path === `vault/secrets/${ANTHROPIC_SECRET_NAME}`), true);
 assert.equal(resolveManifest(PAIN_MANIFEST).resources.some((permission) => permission.path === `${APP_IDS.pain}/`), true);
 
 const result = analyzeCorrelations(
