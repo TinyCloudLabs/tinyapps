@@ -1,6 +1,5 @@
 import { OpenKey, OpenKeyProvider } from "@openkey/sdk";
 import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sdk";
-import { providers } from "ethers";
 
 import { normalizeStoredRecord } from "./analysis.js";
 import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, registryPathFor } from "./manifests.js";
@@ -14,16 +13,19 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   const openKeyHost = options.openKeyHost || import.meta.env.VITE_OPENKEY_HOST || DEFAULT_OPENKEY_HOST;
   const domain = globalThis.window?.location?.hostname || "tinyapps.local";
 
-  const openkey = new OpenKey({ host: openKeyHost, appName: manifest.name });
+  const openkey = options.openkey ?? new OpenKey({ host: openKeyHost, appName: manifest.name });
   const authResult = await openkey.connect();
-  const eip1193Provider = new OpenKeyProvider(openkey, authResult);
-  const web3Provider = new providers.Web3Provider(eip1193Provider);
 
+  // Sign-in goes through OpenKey's versioned `authorizeTinyCloud` (config.openkey):
+  // OpenKey reviews and signs the session grant. The provider below only answers
+  // account and chain lookups; sign-in never calls its `personal_sign`.
   const tcw = await TinyCloudWeb.create({
     manifest,
     tinycloudHosts: [host],
     domain,
-    provider: web3Provider,
+    provider: new OpenKeyProvider(openkey, authResult),
+    openkey: { client: openkey, mode: "iframe" },
+    persistSession: false,
     autoCreateSpace: true,
     spacePrefix: SPACE_APPLICATIONS,
     spaceCreationHandler: new AutoApproveSpaceCreationHandler(),
@@ -33,7 +35,10 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     },
   });
   const session = await tcw.signIn();
-  secretsSigners.set(tcw, web3Provider.getSigner());
+  // Secrets unlock derives its key from a byte-exact signature, a separate use from sign-in.
+  secretsSigners.set(tcw, {
+    signMessage: async (message) => (await openkey.signMessage({ message, keyId: authResult.keyId })).signature,
+  });
   await publishManifest(tcw, manifest);
   return {
     tcw,
