@@ -1,6 +1,7 @@
 import { OpenKey, OpenKeyProvider } from "@openkey/sdk";
 import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sdk";
 
+import { refuseNarrowedApproval } from "./approval.js";
 import { normalizeStoredRecord } from "./analysis.js";
 import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, registryPathFor } from "./manifests.js";
 
@@ -13,7 +14,10 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   const openKeyHost = options.openKeyHost || import.meta.env.VITE_OPENKEY_HOST || DEFAULT_OPENKEY_HOST;
   const domain = globalThis.window?.location?.hostname || "tinyapps.local";
 
-  const openkey = options.openkey ?? new OpenKey({ host: openKeyHost, appName: manifest.name });
+  const openkey = refuseNarrowedApproval(
+    options.openkey ?? new OpenKey({ host: openKeyHost, appName: manifest.name }),
+    manifest,
+  );
   const authResult = await openkey.connect();
 
   // Sign-in goes through OpenKey's versioned `authorizeTinyCloud` (config.openkey):

@@ -72,5 +72,36 @@ const options = { host: "https://node.example.test", openKeyHost: "https://openk
   assert.equal(openkey.calls.signMessage, 0);
 }
 
+// A narrowed approval (owner unticked a permission) is refused in plain words and leaves no session.
+{
+  const narrow = (siwe) => {
+    const recap = /urn:recap:([A-Za-z0-9_-]+)/.exec(siwe)[1];
+    const payload = JSON.parse(Buffer.from(recap, "base64url").toString());
+    const dropped = Object.keys(payload.att).find((resource) => resource.includes(":secrets/kv/vault/secrets/"));
+    assert.ok(dropped, "request asks for the secret read");
+    delete payload.att[dropped];
+    return siwe.replace(recap, Buffer.from(JSON.stringify(payload)).toString("base64url"));
+  };
+  const openkey = fakeOpenKey(async (request) => ({
+    protocolVersion: 1,
+    address,
+    signature: "0x",
+    signedMessage: narrow(request.siwe),
+    selectedActionKeys: [],
+    permissions: [],
+  }));
+  await assert.rejects(
+    connectOpenKeyTinyCloud(FOOD_MANIFEST, { ...options, openkey }),
+    (error) => {
+      assert.equal(
+        error.message,
+        "Food Tracker needs access to your saved Anthropic API key to work. Sign in again and keep all permissions.",
+      );
+      return true;
+    },
+  );
+  assert.equal(openkey.calls.authorize.length, 1);
+}
+
 console.log("sign-in tests passed");
 process.exit(0);
