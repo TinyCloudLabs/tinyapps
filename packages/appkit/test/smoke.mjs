@@ -10,6 +10,8 @@ import {
   INSIGHT_MANIFEST,
   PAIN_MANIFEST,
   SPACE_APPLICATIONS,
+  encryptionNetworkId,
+  manifestForOwner,
   recordsPrefix,
   resolveManifestPath,
 } from "../src/manifests.js";
@@ -29,8 +31,13 @@ assert.equal(FOOD_MANIFEST["x-tinyapp"].externalServices[0].secret, ANTHROPIC_SE
 assert.equal(INSIGHT_MANIFEST.permissions.some((permission) => permission.path === "" && permission.space === SPACE_APPLICATIONS), true);
 const foodResources = resolveManifest(FOOD_MANIFEST).resources;
 assert.equal(foodResources.some((permission) => permission.path === `${APP_IDS.food}/`), true);
-assert.equal(foodResources.some((permission) => permission.path === `keys/secrets/${ANTHROPIC_SECRET_NAME}`), true);
 assert.equal(foodResources.some((permission) => permission.path === `vault/secrets/${ANTHROPIC_SECRET_NAME}`), true);
+// The 3.x secrets service reads through the owner's default encryption network: sign-in must cover kv get AND decrypt.
+const owner = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
+const foodSignIn = resolveManifest(manifestForOwner(FOOD_MANIFEST, owner)).resources;
+assert.equal(foodSignIn.some((permission) => permission.service === "tinycloud.kv" && permission.path === `vault/secrets/${ANTHROPIC_SECRET_NAME}` && permission.actions.includes("tinycloud.kv/get")), true);
+assert.equal(foodSignIn.some((permission) => permission.service === "tinycloud.encryption" && permission.path === encryptionNetworkId(owner) && permission.actions.includes("tinycloud.encryption/decrypt")), true);
+assert.equal(resolveManifest(manifestForOwner(PAIN_MANIFEST, owner)).resources.some((permission) => permission.service === "tinycloud.encryption"), false);
 assert.equal(resolveManifest(PAIN_MANIFEST).resources.some((permission) => permission.path === `${APP_IDS.pain}/`), true);
 
 const result = analyzeCorrelations(

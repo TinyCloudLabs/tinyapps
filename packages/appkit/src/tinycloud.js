@@ -3,11 +3,14 @@ import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sd
 
 import { refuseNarrowedApproval } from "./approval.js";
 import { normalizeStoredRecord } from "./analysis.js";
-import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, registryPathFor } from "./manifests.js";
+import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, manifestForOwner, registryPathFor } from "./manifests.js";
 
 const DEFAULT_HOST = "https://node.tinycloud.xyz";
 const DEFAULT_OPENKEY_HOST = "https://openkey.so";
 const secretsSigners = new WeakMap();
+// Draft copy, Monica words it.
+export const REENTER_API_KEY_MESSAGE =
+  "Your saved Anthropic API key can't be read after the TinyCloud update. Please enter your Anthropic API key again in Settings.";
 
 export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   const host = options.host || import.meta.env.VITE_TINYCLOUD_HOST || DEFAULT_HOST;
@@ -24,7 +27,7 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   // OpenKey reviews and signs the session grant. The provider below only answers
   // account and chain lookups; sign-in never calls its `personal_sign`.
   const tcw = await TinyCloudWeb.create({
-    manifest,
+    manifest: manifestForOwner(manifest, authResult.address),
     tinycloudHosts: [host],
     domain,
     provider: new OpenKeyProvider(openkey, authResult),
@@ -108,7 +111,11 @@ export async function putPhoto(tcw, appId, id, photo) {
 export async function getAnthropicApiKey(tcw) {
   await unlockSecrets(tcw);
   const result = await tcw.secrets.get(ANTHROPIC_SECRET_NAME);
-  if (!result.ok) return "";
+  if (!result.ok) {
+    // A key saved by the older appkit sits in the previous vault format and can't be decrypted.
+    if (result.error?.code === "DECRYPTION_FAILED") throw new Error(REENTER_API_KEY_MESSAGE);
+    return "";
+  }
   const value = kvValue(result.data);
   return typeof value === "string" ? value : "";
 }

@@ -21,7 +21,7 @@ globalThis.window = Object.assign(globalThis.window ?? {}, {
 });
 globalThis.localStorage = window.localStorage;
 
-const { connectOpenKeyTinyCloud } = await import("../src/tinycloud.js");
+const { REENTER_API_KEY_MESSAGE, connectOpenKeyTinyCloud, getAnthropicApiKey } = await import("../src/tinycloud.js");
 const { FOOD_MANIFEST } = await import("../src/manifests.js");
 
 const address = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
@@ -101,6 +101,17 @@ const options = { host: "https://node.example.test", openKeyHost: "https://openk
     },
   );
   assert.equal(openkey.calls.authorize.length, 1);
+}
+
+// A key saved in the previous vault format asks the user to re-enter it; it is not a silent empty key.
+{
+  const fakeTcw = (error) => ({ secrets: { unlock: async () => ({ ok: true }), get: async () => ({ ok: false, error }) } });
+  await assert.rejects(
+    getAnthropicApiKey(fakeTcw({ code: "DECRYPTION_FAILED", service: "vault", message: "envelope.v must be 1 (got undefined)" })),
+    { message: REENTER_API_KEY_MESSAGE },
+  );
+  // A key that was never saved stays an empty key.
+  assert.equal(await getAnthropicApiKey(fakeTcw({ code: "KEY_NOT_FOUND", service: "vault" })), "");
 }
 
 console.log("sign-in tests passed");
