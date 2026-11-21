@@ -1,3 +1,4 @@
+import "./buffer-global.js";
 import { OpenKey, OpenKeyProvider } from "@openkey/sdk";
 import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sdk";
 
