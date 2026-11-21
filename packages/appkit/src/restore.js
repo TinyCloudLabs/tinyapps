@@ -206,6 +206,23 @@ async function endOpenKeySession(client, timeoutMs) {
 }
 
 /**
+ * The local part of a sign-out, also how a sign-in that finishes after the person signed out is thrown away: signs
+ * the client out and clears the saved session and the renewal receipt of `address`. A client that will not sign out
+ * does not stop the clearing; a receipt that cannot be cleared throws.
+ */
+export async function signOutLocally(manifest, tcw, address) {
+  clearRenewalReceipt(manifest, address);
+  try {
+    await tcw.signOut();
+  } catch {
+    // The saved session is cleared below whatever the client says.
+  }
+  await appSessionStorage(manifest)
+    .clear(address)
+    .catch(() => undefined);
+}
+
+/**
  * Sign out of the session of `address`. OpenKey is asked first and left pending (its window needs the click that
  * started this), but nothing waits on it: the session is signed out locally and the saved session and its renewal
  * receipt are cleared, then `onSignedOut` runs (the app shows its signed-out screen), and only then does this wait
@@ -231,15 +248,7 @@ export async function signOutOfTinyCloud(
 ) {
   const ending = endOpenKeySession(() => openkey ?? createOpenKey(), timeoutMs);
   try {
-    clearRenewalReceipt(manifest, address);
-    try {
-      await tcw.signOut();
-    } catch {
-      // The saved session is cleared below whatever the client says.
-    }
-    await appSessionStorage(manifest)
-      .clear(address)
-      .catch(() => undefined);
+    await signOutLocally(manifest, tcw, address);
   } finally {
     // In every branch, a failing step included, the screen clears before OpenKey is awaited.
     onSignedOut();

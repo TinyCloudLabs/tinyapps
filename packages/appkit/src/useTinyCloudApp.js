@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { restoreSavedSession, signOutOfTinyCloud } from "./restore.js";
+import { restoreSavedSession, signOutLocally, signOutOfTinyCloud } from "./restore.js";
 import { connectOpenKeyTinyCloud, isSessionEndedError } from "./tinycloud.js";
 
 const messageOf = (err) => (err instanceof Error ? err.message : String(err));
@@ -27,6 +27,8 @@ export function useTinyCloudApp(manifest) {
   const reauthorizingRef = useRef(false);
   // Counts sign-ins, so a late answer to an earlier sign-out is not shown over a newer sign-in.
   const epochRef = useRef(0);
+  // Counts sign-outs. An in-place sign-in or lease restore that was started before a sign-out must not outlive it.
+  const signOutGenRef = useRef(0);
 
   useEffect(() => {
     setTcw(null);
@@ -76,13 +78,31 @@ export function useTinyCloudApp(manifest) {
     setRenewsUntil(next.renewsUntil);
   }, []);
 
+  // A sign-in or lease restore that finishes after the person signed out: nothing is adopted, and the client it
+  // made is signed out with its saved session and receipt cleared, so a reload does not sign the person in again.
+  const discardLate = useCallback(
+    async (client, address) => {
+      try {
+        await signOutLocally(manifest, client, address);
+      } catch {
+        // Nothing is adopted either way.
+      }
+    },
+    [manifest],
+  );
+
   const signIn = useCallback(async () => {
     epochRef.current += 1;
+    const signedOutAt = signOutGenRef.current;
     setSigningIn(true);
     setError("");
     setSignOutNotice(null);
     try {
       const next = await connectOpenKeyTinyCloud(manifest);
+      if (signOutGenRef.current !== signedOutAt) {
+        await discardLate(next.tcw, next.openKeyAddress);
+        return null;
+      }
       adopt(next);
       return next.session;
     } catch (err) {
@@ -91,7 +111,7 @@ export function useTinyCloudApp(manifest) {
     } finally {
       setSigningIn(false);
     }
-  }, [manifest, adopt]);
+  }, [manifest, adopt, discardLate]);
 
   // Runs `action(tcw)` against the current session. Resolves `{ done: true, value }`. When the failure is the
   // session having ended (see `isSessionEndedError`) it keeps the action, sets `expired` and resolves
@@ -115,16 +135,26 @@ export function useTinyCloudApp(manifest) {
     if (reauthorizingRef.current) return false;
     reauthorizingRef.current = true;
     epochRef.current += 1;
+    const signedOutAt = signOutGenRef.current;
+    const late = () => signOutGenRef.current !== signedOutAt;
     setSigningIn(true);
     setError("");
     try {
       let next = null;
       const outcome = await restoreSavedSession(manifest).catch(() => null);
+      if (late()) {
+        if (outcome?.kind === "restored") await discardLate(outcome.tcw, outcome.address);
+        return false;
+      }
       if (outcome?.kind === "restored" && outcome.renewsUntil) {
         next = { tcw: outcome.tcw, session: outcome.session, openKeyAddress: outcome.address, renewsUntil: outcome.renewsUntil, openkey: null };
       } else {
         if (outcome?.kind === "restored") outcome.tcw.cleanup();
         next = await connectOpenKeyTinyCloud(manifest);
+        if (late()) {
+          await discardLate(next.tcw, next.openKeyAddress);
+          return false;
+        }
       }
       adopt(next);
       setExpired(false);
@@ -136,7 +166,7 @@ export function useTinyCloudApp(manifest) {
       reauthorizingRef.current = false;
       setSigningIn(false);
     }
-  }, [manifest, adopt]);
+  }, [manifest, adopt, discardLate]);
 
   // The prompt's button: sign in again, then run the kept action exactly once on the new session. A failure of
   // that one run is shown (in `error`); the entry is still kept.
@@ -165,6 +195,7 @@ export function useTinyCloudApp(manifest) {
     setSigningOut(true);
     // A new sign-in or sign-out while OpenKey is still being awaited makes this one's notice stale.
     const generation = (epochRef.current += 1);
+    signOutGenRef.current += 1;
     let cleared = false;
     const clearScreen = () => {
       // Once only: a later call (the `finally`) must not wipe a sign-in that started while OpenKey was awaited.
