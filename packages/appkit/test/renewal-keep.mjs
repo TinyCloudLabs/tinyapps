@@ -47,9 +47,9 @@ async function setup({ status = "renewal-candidate", restore = {}, read, leaseEn
     cleanup: () => undefined,
   };
   const run = async ({ offline = false } = {}) => {
-    // A lease past its end renews nothing: the clock reads 8 days on, past the 7-day lease the receipt carries.
+    // A lease past its end renews nothing: the clock reads 91 days on, past the 90-day lease the receipt carries.
     const clock = Date.now;
-    if (leaseEnded) Date.now = () => clock() + 8 * 24 * 60 * 60 * 1000;
+    if (leaseEnded) Date.now = () => clock() + 91 * 24 * 60 * 60 * 1000;
     try {
       return await restoreSavedSession(PAIN_MANIFEST, { storage, createClient: async () => tcw, isOffline: () => offline });
     } finally {

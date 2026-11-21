@@ -51,7 +51,7 @@ function admit(address, record, renewal, load = async () => record, arrivedAt = 
   reset();
   const { owner, record, receipt, lease } = await fixture();
   published = receipt.receipt.nodeIdentity;
-  assert.equal(await verifiedRenewalLease(receipt, record), lease.authorization);
+  assert.equal(await verifiedRenewalLease(receipt, record, PAIN_MANIFEST), lease.authorization);
   assert.equal(await admit(owner.address, record, receipt), receipt.receipt.leaseExpiresAt);
   assert.deepEqual(presented, [lease.authorization]);
   assert.deepEqual(loadRenewalReceipt(PAIN_MANIFEST, owner.address), receipt);
@@ -70,11 +70,11 @@ function admit(address, record, renewal, load = async () => record, arrivedAt = 
   assert.equal(loadRenewalReceipt(PAIN_MANIFEST, owner.address), null);
 }
 
-// A lease of the 7 days asked for, or shorter, is accepted.
+// A lease of the 90 days Pain Tracker asks for, or shorter, is accepted.
 for (const given of [{}, { leaseSeconds: 3 * 86_400 }]) {
   reset();
   const { receipt, record, lease } = await fixture(given);
-  assert.equal(await verifiedRenewalLease(receipt, record), lease.authorization, JSON.stringify(given));
+  assert.equal(await verifiedRenewalLease(receipt, record, PAIN_MANIFEST), lease.authorization, JSON.stringify(given));
 }
 
 // A lease that does not check out against the session just signed in is refused: not sent, not stored.
@@ -84,14 +84,14 @@ for (const given of [{}, { leaseSeconds: 3 * 86_400 }]) {
     const made = await build();
     published = made.receipt.receipt?.nodeIdentity;
     const record = mutateRecord(made.record);
-    assert.equal(await verifiedRenewalLease(made.receipt, record), null, `${label}: not verified`);
+    assert.equal(await verifiedRenewalLease(made.receipt, record, PAIN_MANIFEST), null, `${label}: not verified`);
     assert.equal(await admit(made.owner.address, record, made.receipt), null, `${label}: not admitted`);
     assert.deepEqual(presented, [], `${label}: nothing sent to the node`);
     assert.equal(loadRenewalReceipt(PAIN_MANIFEST, made.owner.address), null, `${label}: nothing stored`);
   };
   await refused("lease signed by another wallet", () => fixture({ leaseSigner: privateKeyToAccount(generatePrivateKey()) }));
-  // A lease longer than the 7 days asked for, by a day or by a minute past the clock slack.
-  await refused("lease of 8 days", () => fixture({ leaseSeconds: 8 * 86_400 }));
+  // A lease longer than the 90 days Pain Tracker asks for, or ending past the lifetime it states.
+  await refused("lease of 91 days", () => fixture({ leaseSeconds: 91 * 86_400 }));
   await refused("lease stating 7 days but ending 2 minutes past them", () => fixture({ endExtraSeconds: 120 }));
   await refused("lease with an extra ability", () => fixture({ extraAbility: true }));
   await refused("lease naming another audience than the receipt's renewer", () => fixture({ leaseAudience: OTHER_RENEWER }));

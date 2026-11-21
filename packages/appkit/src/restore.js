@@ -3,11 +3,11 @@ import { TinyCloudWeb } from "@tinycloud/web-sdk";
 
 import { manifestForOwner } from "./manifests.js";
 import {
-  SESSION_EXPIRATION_MS,
   appSessionStorage,
   clearRenewalReceipt,
   keptLeaseEnd,
   renewalRestoreFor,
+  sessionExpirationMsFor,
 } from "./renewal.js";
 import { applicationsKV, attachRestoredSecretsSigner, tinycloudSettings } from "./tinycloud.js";
 
@@ -45,7 +45,7 @@ export function createRestoreClient(manifest, address, options = {}) {
     domain,
     provider: readOnlyAccountProvider(address),
     persistSession: true,
-    sessionExpirationMs: SESSION_EXPIRATION_MS,
+    sessionExpirationMs: sessionExpirationMsFor(manifest),
     sessionStorageKeyPrefix: appSessionStorage(manifest).keyPrefix,
     autoCreateSpace: false,
     autoBootstrapAccount: false,
@@ -116,7 +116,9 @@ export async function restoreSavedSession(manifest, deps = {}) {
     await storage.clear(address).catch(() => undefined);
   };
 
-  const address = storage.activeAddress() ?? storage.activeAddressForRenewal();
+  // `activeAddress()` discards the pointer to a session past its signed end, which is the very session a lease
+  // renews; `activeAddressForRenewal()` keeps it.
+  const address = storage.activeAddressForRenewal();
   if (!address) return { kind: "signedOut" };
 
   let renewal = null;
@@ -167,8 +169,11 @@ export async function restoreSavedSession(manifest, deps = {}) {
   return { kind: "signedOut" };
 }
 
-/** How long sign-out waits for OpenKey before it goes on with the local sign-out. */
-export const OPENKEY_SIGN_OUT_TIMEOUT_MS = 5_000;
+/**
+ * How long the notice waits for OpenKey's answer to the sign-out. OpenKey's sign-out widget waits for the person to
+ * press "Sign out" in it and the SDK reports no progress, so the wait is long. The local sign-out never waits.
+ */
+export const OPENKEY_SIGN_OUT_TIMEOUT_MS = 120_000;
 
 // Draft copy, the copy owner words it.
 export function signedOutNoticeFor(appName) {
@@ -191,7 +196,7 @@ async function endOpenKeySession(client, timeoutMs) {
     timer = setTimeout(() => reject(new Error("OpenKey sign-out timed out")), timeoutMs);
   });
   try {
-    const acknowledgement = await Promise.race([Promise.resolve().then(() => client().signOut()), deadline]);
+    const acknowledgement = await Promise.race([client().signOut(), deadline]);
     return acknowledgement?.revoked === true;
   } catch {
     return false;
@@ -201,13 +206,16 @@ async function endOpenKeySession(client, timeoutMs) {
 }
 
 /**
- * Sign out of the session of `address`: ends the OpenKey session and its leases first (it can open OpenKey's
- * window, which needs the click), then signs out locally and clears the saved session and its renewal receipt.
+ * Sign out of the session of `address`. OpenKey is asked first and left pending (its window needs the click that
+ * started this), but nothing waits on it: the session is signed out locally and the saved session and its renewal
+ * receipt are cleared, then `onSignedOut` runs (the app shows its signed-out screen), and only then does this wait
+ * for OpenKey's answer, up to `timeoutMs`.
  * `openkey` is the client this tab signed in with; a tab restored through the saved session has none, so it
  * builds one with `createOpenKey`. It always asks, so a lost receipt cannot leave a lease behind. Resolves
- * `{ notice }`: when OpenKey confirmed, the notice that access won't renew; else the notice that OpenKey may still
- * be renewing it. Both name `appName`.
- * Never throws: the local sign-out and the clearing always happen.
+ * `{ notice }`: when OpenKey confirmed, the notice that access won't renew; on anything else (declined, cancelled,
+ * no answer in time) the notice that OpenKey may still be renewing it. Both name `appName`.
+ * The signed-out screen is cleared (`onSignedOut`) after the local steps even when one of them throws; such an
+ * error is then thrown. OpenKey's side never throws.
  */
 export async function signOutOfTinyCloud(
   manifest,
@@ -218,25 +226,26 @@ export async function signOutOfTinyCloud(
     createOpenKey = () => new OpenKey(openKeySettings(manifest)),
     timeoutMs = OPENKEY_SIGN_OUT_TIMEOUT_MS,
     appName = manifest.name,
+    onSignedOut = () => undefined,
   } = {},
 ) {
-  let notice = signedOutNoticeFor(appName);
+  const ending = endOpenKeySession(() => openkey ?? createOpenKey(), timeoutMs);
   try {
-    const ended = await endOpenKeySession(() => openkey ?? createOpenKey(), timeoutMs);
-    if (!ended) notice = renewalMayContinueNoticeFor(appName);
-  } catch {
-    notice = renewalMayContinueNoticeFor(appName);
+    clearRenewalReceipt(manifest, address);
+    try {
+      await tcw.signOut();
+    } catch {
+      // The saved session is cleared below whatever the client says.
+    }
+    await appSessionStorage(manifest)
+      .clear(address)
+      .catch(() => undefined);
+  } finally {
+    // In every branch, a failing step included, the screen clears before OpenKey is awaited.
+    onSignedOut();
   }
-  clearRenewalReceipt(manifest, address);
-  try {
-    await tcw.signOut();
-  } catch {
-    // The saved session is cleared below whatever the client says.
-  }
-  await appSessionStorage(manifest)
-    .clear(address)
-    .catch(() => undefined);
-  return { notice };
+  const ended = await ending;
+  return { notice: ended ? signedOutNoticeFor(appName) : renewalMayContinueNoticeFor(appName) };
 }
 
 function openKeySettings(manifest) {

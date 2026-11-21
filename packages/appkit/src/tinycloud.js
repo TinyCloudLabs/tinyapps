@@ -4,13 +4,7 @@ import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sd
 import { refuseNarrowedApproval } from "./approval.js";
 import { normalizeStoredRecord } from "./analysis.js";
 import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, manifestForOwner, registryPathFor } from "./manifests.js";
-import {
-  SESSION_EXPIRATION_MS,
-  SIGN_IN_RENEWAL_ASK,
-  admitSignInRenewal,
-  appSessionStorage,
-  openKeyRenewalClient,
-} from "./renewal.js";
+import { admitSignInRenewal, appSessionStorage, openKeyRenewalClient, renewalAskFor, sessionExpirationMsFor } from "./renewal.js";
 
 const DEFAULT_HOST = "https://node.tinycloud.xyz";
 const DEFAULT_OPENKEY_HOST = "https://openkey.so";
@@ -29,15 +23,15 @@ export function tinycloudSettings(options = {}) {
 }
 
 /**
- * Sign in through OpenKey. With `options.keepSignedIn: true` (the person ticked the choice before connecting) it
- * also asks OpenKey for a renewal lease and keeps the session saved so a reload restores it; without it the
- * sign-in is finite, nothing is asked and nothing is saved. The result's `renewsUntil` is the end of the lease
- * the node admitted, or null: without a lease (unticked at OpenKey, an OpenKey without renewal, a lease that
- * fails its checks or the node's refusal) the sign-in is finite and nothing is kept for renewal.
+ * Sign in through OpenKey. It always asks OpenKey for a renewal lease (`renewalAskFor`) and keeps the session
+ * saved so a reload restores it; whether to renew is the owner's choice in OpenKey's own box. The result's
+ * `renewsUntil` is the end of the lease the node admitted, or null: without a lease (unticked at OpenKey, an
+ * OpenKey without renewal, a lease that fails its checks or the node's refusal) the sign-in is finite and
+ * nothing is kept for renewal.
  */
 export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   const { host, openKeyHost, domain } = tinycloudSettings(options);
-  const renews = options.keepSignedIn === true;
+  const sessionExpirationMs = sessionExpirationMsFor(manifest);
 
   const openkey = refuseNarrowedApproval(
     options.openkey ?? new OpenKey({ host: openKeyHost, appName: manifest.name }),
@@ -50,18 +44,16 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   let renewalOutcome = {};
   let renewalArrivedAt;
   // Renewal needs a sign-in window OpenKey can return a lease through (not redirect) and a session end the
-  // owner may change, within the session length asked for.
-  const openkeySignIn = renews
-    ? {
-        client: openKeyRenewalClient(openkey, SIGN_IN_RENEWAL_ASK, (outcome) => {
-          renewalOutcome = outcome;
-          renewalArrivedAt = performance.now();
-        }),
-        mode: "iframe",
-        expiryChangeable: true,
-        maxExpiresAt: () => Date.now() + SESSION_EXPIRATION_MS,
-      }
-    : { client: openkey, mode: "iframe" };
+  // owner may change, within the session length of the app's tier (`maxExpiresAt` limits a changed end only).
+  const openkeySignIn = {
+    client: openKeyRenewalClient(openkey, renewalAskFor(manifest), (outcome) => {
+      renewalOutcome = outcome;
+      renewalArrivedAt = performance.now();
+    }),
+    mode: "iframe",
+    expiryChangeable: true,
+    maxExpiresAt: () => Date.now() + sessionExpirationMs,
+  };
 
   // Sign-in goes through OpenKey's versioned `authorizeTinyCloud` (config.openkey):
   // OpenKey reviews and signs the session grant. The provider below only answers
@@ -72,8 +64,9 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     domain,
     provider: new OpenKeyProvider(openkey, authResult),
     openkey: openkeySignIn,
-    persistSession: renews,
-    ...(renews ? { sessionExpirationMs: SESSION_EXPIRATION_MS, sessionStorageKeyPrefix: appSessionStorage(manifest).keyPrefix } : {}),
+    sessionExpirationMs,
+    persistSession: true,
+    sessionStorageKeyPrefix: appSessionStorage(manifest).keyPrefix,
     autoCreateSpace: true,
     spacePrefix: SPACE_APPLICATIONS,
     spaceCreationHandler: new AutoApproveSpaceCreationHandler(),
@@ -85,15 +78,13 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   const session = await tcw.signIn();
   // OpenKey records the lease but does not send it to the node: the session's node admits it here, else this
   // sign-in runs to its signed end.
-  const renewsUntil = renews
-    ? await admitSignInRenewal({
-        tcw,
-        manifest,
-        address: authResult.address,
-        renewal: renewalOutcome.renewal,
-        arrivedAt: renewalArrivedAt,
-      })
-    : null;
+  const renewsUntil = await admitSignInRenewal({
+    tcw,
+    manifest,
+    address: authResult.address,
+    renewal: renewalOutcome.renewal,
+    arrivedAt: renewalArrivedAt,
+  });
   // Secrets unlock derives its key from a byte-exact signature, a separate use from sign-in.
   secretsSigners.set(tcw, {
     signMessage: async (message) => (await openkey.signMessage({ message, keyId: authResult.keyId })).signature,
@@ -199,6 +190,8 @@ export async function getAnthropicApiKey(tcw) {
   if (!result.ok) {
     // A key saved by the older appkit sits in the previous vault format and can't be decrypted.
     if (result.error?.code === "DECRYPTION_FAILED") throw new Error(REENTER_API_KEY_MESSAGE);
+    // An ended session is no missing key: say so, never an empty key.
+    if (isSessionEndedError(result.error)) throw new Error("read Anthropic API key failed: session ended", { cause: result.error });
     return "";
   }
   const value = kvValue(result.data);
@@ -221,7 +214,23 @@ export function applicationsKV(tcw) {
 export function unwrap(result, label) {
   if (result?.ok) return result.data;
   const message = result?.error?.message || result?.error?.code || "unknown TinyCloud error";
-  throw new Error(`${label} failed: ${message}`);
+  // The SDK's own error rides along as the cause, so a caller can tell a session that ended from any other failure.
+  throw new Error(`${label} failed: ${message}`, { cause: result?.error });
+}
+
+/**
+ * Did this failure come from the session having ended? The SDK reports a node 401/403 as `AUTH_UNAUTHORIZED`
+ * (a session past its signed end is refused that way) and its own expiry as `AUTH_EXPIRED`; the HTTP status
+ * rides in `meta.status`. Nothing else counts: any other error keeps the app's usual display. Follows `cause`.
+ */
+export function isSessionEndedError(error) {
+  for (let depth = 0; depth < 4 && error != null && typeof error === "object"; depth++) {
+    if (error.code === "AUTH_UNAUTHORIZED" || error.code === "AUTH_EXPIRED") return true;
+    const status = error.meta?.status ?? error.status;
+    if (status === 401 || status === 403) return true;
+    error = error.cause;
+  }
+  return false;
 }
 
 async function unlockSecrets(tcw) {

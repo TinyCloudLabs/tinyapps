@@ -3,6 +3,8 @@ import { admitOwnerRenewalLease } from "@tinycloud/sdk-core/delegations/renewal"
 import { parseApprovalRenewal } from "@tinycloud/share-envelope/links";
 import { BrowserSessionStorage } from "@tinycloud/web-sdk";
 
+import { APP_IDS } from "./manifests.js";
+
 // Renewing sign-in. OpenKey signs a renewal lease beside the session the owner approves. OpenKey records it
 // but does not send it to the node: right after sign-in the app checks it against the session the sign-in
 // just saved, has the session's node admit it, and only then keeps it beside the saved session as the
@@ -10,30 +12,35 @@ import { BrowserSessionStorage } from "@tinycloud/web-sdk";
 // node stays the authority on whether the lease still renews: the SDK's renewal restore asks it before it
 // restores anything.
 
-/** How long a renewal lease lasts: the one number the ask, the checks and the copy all use. */
-export const RENEWAL_LEASE_SECONDS = 7 * 24 * 60 * 60;
+const DAY_SECONDS = 24 * 60 * 60;
 
 /**
- * The renewal the apps ask OpenKey to offer at sign-in, sent only when the person ticks the in-app choice. It
- * names no purpose, so OpenKey's own renewal box starts unticked too.
+ * What an app asks OpenKey for at sign-in and how long its session is signed for, per app:
+ * - `purpose`: sent with the renewal ask; "standing" makes OpenKey's own renewal box start ticked, none starts
+ *   it unticked;
+ * - `leaseSeconds`: the renewal lease the app asks for, and the longest it accepts back;
+ * - `sessionSeconds`: the signed session length (the SDK's own default is 30 days, so every sign-in names it).
+ * Moving an app to another tier is a change to its entry here and nothing else.
  */
-export const SIGN_IN_RENEWAL_ASK = Object.freeze({
-  version: 1,
-  leaseLifetimeSeconds: RENEWAL_LEASE_SECONDS,
+const ORDINARY_TIER = Object.freeze({ purpose: "standing", leaseSeconds: 90 * DAY_SECONDS, sessionSeconds: 7 * DAY_SECONDS });
+
+export const RENEWAL_TIERS = Object.freeze({
+  [APP_IDS.pain]: ORDINARY_TIER,
+  [APP_IDS.insight]: ORDINARY_TIER,
+  // Food Tracker decrypts a secret: no purpose (OpenKey's box starts unticked), a shorter lease and session.
+  [APP_IDS.food]: Object.freeze({ purpose: undefined, leaseSeconds: 7 * DAY_SECONDS, sessionSeconds: DAY_SECONDS }),
 });
 
-const leaseDays = RENEWAL_LEASE_SECONDS / (24 * 60 * 60);
+export const renewalTierFor = (manifest) => RENEWAL_TIERS[manifest.app_id] ?? ORDINARY_TIER;
 
-// Draft copy, the copy owner words it.
-export const KEEP_SIGNED_IN_LABEL = `Keep me signed in for up to ${leaseDays} days`;
+/** The renewal ask for `manifest`'s app: exactly these keys, `purpose` only when its tier has one. */
+export const renewalAskFor = (manifest) => {
+  const { purpose, leaseSeconds } = renewalTierFor(manifest);
+  return Object.freeze({ version: 1, leaseLifetimeSeconds: leaseSeconds, ...(purpose ? { purpose } : {}) });
+};
 
-// Draft copy, the copy owner words it.
-export function keepSignedInWarning(appName, records = "health") {
-  return `While this is ticked, ${appName} can read your ${records} records for up to ${leaseDays} days without asking you again. Tick it only on a device you trust. You can stop it at any time under Renewing permissions in OpenKey settings.`;
-}
-
-/** How long a signed session lasts; the owner may only shorten it in OpenKey's approval. */
-export const SESSION_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long `manifest`'s signed session lasts. The owner may only shorten it in OpenKey's approval. */
+export const sessionExpirationMsFor = (manifest) => renewalTierFor(manifest).sessionSeconds * 1000;
 
 const RENEW = "tinycloud.delegation/renew";
 
@@ -103,9 +110,9 @@ const bearerToken = (header) => header.replace(/^Bearer\s+/i, "");
 
 /**
  * The lease authorization in `value` when it is a well-formed receipt for `record`'s own grant, signed by the
- * grant's owner, for that grant only; otherwise null. Never throws.
+ * grant's owner, for that grant only, and no longer than `manifest`'s tier allows; otherwise null. Never throws.
  */
-export async function verifiedRenewalLease(value, record) {
+export async function verifiedRenewalLease(value, record, manifest) {
   try {
     const renewal = parseApprovalRenewal(value);
     const { receipt } = renewal;
@@ -134,7 +141,7 @@ export async function verifiedRenewalLease(value, record) {
       Date.parse(renewal.approvedAt) >= originalEnd ||
       // A lease longer than the one asked for is refused, whatever OpenKey signed. (The receipt's own parse already
       // keeps the lease end within its stated lifetime.)
-      !(renewal.approvedLeaseLifetimeSeconds <= RENEWAL_LEASE_SECONDS)
+      !(renewal.approvedLeaseLifetimeSeconds <= renewalTierFor(manifest).leaseSeconds)
     ) {
       return null;
     }
@@ -156,7 +163,7 @@ export async function admitSignInRenewal({ tcw, manifest, address, renewal, arri
   try {
     const record = await storage.load(address);
     const grant = record?.tinycloudSession;
-    const leaseAuthorization = record ? await verifiedRenewalLease(renewal, record) : null;
+    const leaseAuthorization = record ? await verifiedRenewalLease(renewal, record, manifest) : null;
     if (!record || !grant || !leaseAuthorization) return null;
     const { receipt } = parseApprovalRenewal(renewal);
     const { origin } = await tcw.activeNodeIdentity();
@@ -211,7 +218,7 @@ export async function renewalRestoreFor(manifest, address, storage = appSessionS
   }
   const candidate = await storage.loadRenewalCandidate(address);
   if (candidate.status !== "renewal-candidate") return null;
-  const leaseAuthorization = await verifiedRenewalLease(receipt, candidate.data);
+  const leaseAuthorization = await verifiedRenewalLease(receipt, candidate.data, manifest);
   if (!leaseAuthorization) return null;
   return { address, leaseAuthorization, leaseExpiresAt: parseApprovalRenewal(receipt).receipt.leaseExpiresAt };
 }
@@ -221,7 +228,7 @@ export async function keptLeaseEnd(manifest, address, storage = appSessionStorag
   try {
     const receipt = loadRenewalReceipt(manifest, address);
     const record = receipt === null ? null : await storage.load(address);
-    if (!record || (await verifiedRenewalLease(receipt, record)) === null) return null;
+    if (!record || (await verifiedRenewalLease(receipt, record, manifest)) === null) return null;
     const end = leaseEndMs(receipt);
     return end !== null && end > Date.now() ? parseApprovalRenewal(receipt).receipt.leaseExpiresAt : null;
   } catch {

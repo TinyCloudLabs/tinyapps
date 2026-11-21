@@ -10,26 +10,26 @@ import {
   Pill,
   RenewalNote,
   RestoringScreen,
+  SessionEndedPrompt,
   SignOutButton,
   SignInScreen,
   deleteRecord,
   fmtDay,
   fmtTime,
-  listRecords,
-  makeId,
-  putRecord,
   recordsPrefix,
   todayLabel,
   useTinyCloudApp,
 } from "@tinyapps/appkit";
 import "@tinyapps/appkit/styles.css";
 
+import { loadPainEvents, savePainEvent } from "./actions.js";
+
 const EVENTS_PREFIX = recordsPrefix(APP_IDS.pain, "pain");
 const QUALITIES = ["sharp", "dull", "cramping", "burning", "pressure", "throbbing", "tingling"];
 const LOCATIONS = ["head", "chest", "abdomen-upper", "abdomen-lower", "back-upper", "back-mid", "back-lower", "left-leg", "right-leg"];
 
 function PainApp() {
-  const auth = useTinyCloudApp(PAIN_MANIFEST, { appName: "Pain Tracker" });
+  const auth = useTinyCloudApp(PAIN_MANIFEST);
   const [events, setEvents] = useState([]);
   const [view, setView] = useState("home");
   const [error, setError] = useState("");
@@ -38,7 +38,7 @@ function PainApp() {
     if (!auth.tcw || !auth.session) return;
     setError("");
     try {
-      setEvents(await listRecords(auth.tcw, EVENTS_PREFIX));
+      await auth.runWithSession(async (tcw) => setEvents(await loadPainEvents(tcw)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -84,8 +84,9 @@ function PainApp() {
         <SignOutButton onSignOut={auth.signOut} signingOut={auth.signingOut} />
       </header>
       {error && <div className="error" style={{ margin: "0 22px 12px" }}>{error}</div>}
+      <SessionEndedPrompt auth={auth} />
       {view === "home" && <PainHome events={events} setView={setView} />}
-      {view === "log" && <PainLog tcw={auth.tcw} onSaved={() => { setView("home"); refresh(); }} />}
+      {view === "log" && <PainLog auth={auth} onSaved={() => { setView("home"); refresh(); }} />}
       {view === "history" && <PainHistory events={events} tcw={auth.tcw} onChanged={refresh} />}
       {(view === "home" || view === "history") && (
         <>
@@ -156,7 +157,7 @@ function PainCard({ event, onDelete }) {
   );
 }
 
-function PainLog({ tcw, onSaved }) {
+function PainLog({ auth, onSaved }) {
   const [severity, setSeverity] = useState(5);
   const [locations, setLocations] = useState([]);
   const [quality, setQuality] = useState([]);
@@ -168,16 +169,11 @@ function PainLog({ tcw, onSaved }) {
   const save = async () => {
     setError("");
     try {
-      await putRecord(tcw, EVENTS_PREFIX, {
-        id: makeId("pain"),
-        ts: Date.now(),
-        severity,
-        locations,
-        quality,
-        duration,
-        notes,
+      // If the session ended, the entry stays and the prompt signs in again and saves it once.
+      await auth.runWithSession(async (tcw) => {
+        await savePainEvent(tcw, { severity, locations, quality, duration, notes });
+        onSaved();
       });
-      onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

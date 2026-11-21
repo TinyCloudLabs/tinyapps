@@ -128,7 +128,7 @@ const approvedAt = iso(Math.floor(now / 1000) * 1000);
 
 /** The renewal receipt OpenKey returns for the grant `originalCid`. */
 export async function leaseReceipt(originalCid, owner, options = {}) {
-  const leaseSeconds = options.leaseSeconds ?? 7 * 86_400;
+  const leaseSeconds = options.leaseSeconds ?? 90 * 86_400;
   // `endExtraSeconds` puts the lease end past the lifetime the receipt states (clock slack, or a forgery).
   const leaseEnd = iso(Date.parse(approvedAt) + (leaseSeconds + (options.endExtraSeconds ?? 0)) * 1000);
   const target = `urn:cid:${originalCid}`;

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { restoreSavedSession, signOutOfTinyCloud } from "./restore.js";
-import { connectOpenKeyTinyCloud } from "./tinycloud.js";
+import { connectOpenKeyTinyCloud, isSessionEndedError } from "./tinycloud.js";
 
-// `appName` is the name the app shows in its header; the sign-out notice names it.
-export function useTinyCloudApp(manifest, { appName = manifest.name } = {}) {
+const messageOf = (err) => (err instanceof Error ? err.message : String(err));
+
+export function useTinyCloudApp(manifest) {
   const [tcw, setTcw] = useState(null);
   const [session, setSession] = useState(null);
   const [openKeyAddress, setOpenKeyAddress] = useState("");
@@ -15,10 +16,17 @@ export function useTinyCloudApp(manifest, { appName = manifest.name } = {}) {
   const [signingIn, setSigningIn] = useState(false);
   const [signOutNotice, setSignOutNotice] = useState(null);
   const [signingOut, setSigningOut] = useState(false);
+  // The session ended while the person was in the app: the screen stays, and signing in again happens in place.
+  const [expired, setExpired] = useState(false);
   const clientRef = useRef(null);
   // The OpenKey client this tab signed in with; a tab restored from the saved session has none.
   const openkeyRef = useRef(null);
   const signingOutRef = useRef(false);
+  // The action that failed because the session ended, run once more after the person signs in again.
+  const retryRef = useRef(null);
+  const reauthorizingRef = useRef(false);
+  // Counts sign-ins, so a late answer to an earlier sign-out is not shown over a newer sign-in.
+  const epochRef = useRef(0);
 
   useEffect(() => {
     setTcw(null);
@@ -27,6 +35,8 @@ export function useTinyCloudApp(manifest, { appName = manifest.name } = {}) {
     setRenewsUntil(null);
     setError("");
     setSignOutNotice(null);
+    setExpired(false);
+    retryRef.current = null;
     openkeyRef.current = null;
     setReady(false);
     let cancelled = false;
@@ -57,51 +67,130 @@ export function useTinyCloudApp(manifest, { appName = manifest.name } = {}) {
     };
   }, [manifest]);
 
-  // `keepSignedIn` is the person's tick on the sign-in screen: only then is a renewal lease asked for.
-  const signIn = useCallback(async ({ keepSignedIn } = {}) => {
+  const adopt = useCallback((next) => {
+    clientRef.current = next.tcw;
+    openkeyRef.current = next.openkey ?? null;
+    setTcw(next.tcw);
+    setSession(next.session);
+    setOpenKeyAddress(next.openKeyAddress);
+    setRenewsUntil(next.renewsUntil);
+  }, []);
+
+  const signIn = useCallback(async () => {
+    epochRef.current += 1;
     setSigningIn(true);
     setError("");
     setSignOutNotice(null);
     try {
-      const next = await connectOpenKeyTinyCloud(manifest, { keepSignedIn: keepSignedIn === true });
-      clientRef.current = next.tcw;
-      openkeyRef.current = next.openkey;
-      setTcw(next.tcw);
-      setSession(next.session);
-      setOpenKeyAddress(next.openKeyAddress);
-      setRenewsUntil(next.renewsUntil);
+      const next = await connectOpenKeyTinyCloud(manifest);
+      adopt(next);
       return next.session;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(messageOf(err));
       return null;
     } finally {
       setSigningIn(false);
     }
-  }, [manifest]);
+  }, [manifest, adopt]);
 
-  // Ends the OpenKey session and its leases, then clears the saved session and renewal receipt, so the next load
-  // starts signed out. Never throws. Resolves the notice (also kept as `signOutNotice`): that access won't
-  // renew when OpenKey confirmed the end, else that OpenKey may still be renewing it.
+  // Runs `action(tcw)` against the current session. Resolves `{ done: true, value }`. When the failure is the
+  // session having ended (see `isSessionEndedError`) it keeps the action, sets `expired` and resolves
+  // `{ done: false }`: nothing is cleared, the caller's screen and entry stay as they are. Any other failure
+  // throws, for the caller's usual error display.
+  const runWithSession = useCallback(async (action) => {
+    try {
+      return { done: true, value: await action(clientRef.current) };
+    } catch (err) {
+      if (!isSessionEndedError(err)) throw err;
+      retryRef.current = action;
+      setExpired(true);
+      return { done: false };
+    }
+  }, []);
+
+  // Signs in again in place, no route change: through the saved renewal lease when there is one, else through
+  // OpenKey's sign-in window. The new client and session replace the old ones. Resolves true on success; a
+  // refusal or a cancelled window leaves `expired` set with the reason in `error`.
+  const reauthorize = useCallback(async () => {
+    if (reauthorizingRef.current) return false;
+    reauthorizingRef.current = true;
+    epochRef.current += 1;
+    setSigningIn(true);
+    setError("");
+    try {
+      let next = null;
+      const outcome = await restoreSavedSession(manifest).catch(() => null);
+      if (outcome?.kind === "restored" && outcome.renewsUntil) {
+        next = { tcw: outcome.tcw, session: outcome.session, openKeyAddress: outcome.address, renewsUntil: outcome.renewsUntil, openkey: null };
+      } else {
+        if (outcome?.kind === "restored") outcome.tcw.cleanup();
+        next = await connectOpenKeyTinyCloud(manifest);
+      }
+      adopt(next);
+      setExpired(false);
+      return true;
+    } catch (err) {
+      setError(messageOf(err));
+      return false;
+    } finally {
+      reauthorizingRef.current = false;
+      setSigningIn(false);
+    }
+  }, [manifest, adopt]);
+
+  // The prompt's button: sign in again, then run the kept action exactly once on the new session. A failure of
+  // that one run is shown (in `error`); the entry is still kept.
+  const resume = useCallback(async () => {
+    const action = retryRef.current;
+    if (!(await reauthorize())) return { done: false };
+    retryRef.current = null;
+    if (!action) return { done: true };
+    try {
+      return { done: true, value: await action(clientRef.current) };
+    } catch (err) {
+      setError(messageOf(err));
+      return { done: false };
+    }
+  }, [reauthorize]);
+
+  // Signs out: the session, the saved session and the renewal receipt are cleared and the signed-out screen shows
+  // at once, without waiting for OpenKey. OpenKey's answer (it is asked to end its session and leases, and can wait
+  // for the person) then arrives as the notice, also kept as `signOutNotice`: that access won't renew when OpenKey
+  // confirmed the end, else that OpenKey may still be renewing it. The screen clears even if a local step throws,
+  // and a notice that arrives after a newer sign-in or sign-out is dropped.
   const signOut = useCallback(async () => {
     const client = clientRef.current;
     if (!client || signingOutRef.current) return null;
     signingOutRef.current = true;
     setSigningOut(true);
-    try {
-      const { notice } = await signOutOfTinyCloud(manifest, client, openKeyAddress, { openkey: openkeyRef.current, appName });
+    // A new sign-in or sign-out while OpenKey is still being awaited makes this one's notice stale.
+    const generation = (epochRef.current += 1);
+    let cleared = false;
+    const clearScreen = () => {
+      // Once only: a later call (the `finally`) must not wipe a sign-in that started while OpenKey was awaited.
+      if (cleared) return;
+      cleared = true;
+      signingOutRef.current = false;
       clientRef.current = null;
       openkeyRef.current = null;
+      retryRef.current = null;
       setTcw(null);
       setSession(null);
       setOpenKeyAddress("");
       setRenewsUntil(null);
+      setExpired(false);
+      setSignOutNotice(null);
+      setSigningOut(false);
+    };
+    try {
+      const { notice } = await signOutOfTinyCloud(manifest, client, openKeyAddress, { openkey: openkeyRef.current, onSignedOut: clearScreen });
+      if (epochRef.current !== generation) return null;
       setSignOutNotice(notice);
       return notice;
     } finally {
-      signingOutRef.current = false;
-      setSigningOut(false);
+      clearScreen();
     }
-  }, [manifest, openKeyAddress, appName]);
+  }, [manifest, openKeyAddress]);
 
   return {
     tcw,
@@ -115,5 +204,9 @@ export function useTinyCloudApp(manifest, { appName = manifest.name } = {}) {
     openKeyAddress,
     renewsUntil,
     signOutNotice,
+    expired,
+    runWithSession,
+    reauthorize,
+    resume,
   };
 }

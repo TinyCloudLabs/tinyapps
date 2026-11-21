@@ -74,7 +74,7 @@ const options = { host: "https://node.example.test", openKeyHost: "https://openk
   assert.equal(request.protocolVersion, 1);
   assert.equal(opts.mode, "iframe");
   assert.match(request.siwe, new RegExp(`vault/secrets/${FOOD_MANIFEST.secrets && Object.keys(FOOD_MANIFEST.secrets)[0]}`));
-  assert.equal("renewal" in request, false);
+  assert.deepEqual(request.renewal, { version: 1, leaseLifetimeSeconds: 604800 });
 }
 
 // A declined approval reaches the caller as the error useTinyCloudApp shows, and signs nothing.

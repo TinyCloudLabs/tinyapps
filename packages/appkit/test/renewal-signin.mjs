@@ -13,7 +13,7 @@ import { extractRecapAttenuations, parseCanonicalRecapResource } from "@tinyclou
 import { cacaoFromSiwe, fixture, generatePrivateKey, leaseReceipt, privateKeyToAccount } from "./support/renewal-fixture.mjs";
 
 const { connectOpenKeyTinyCloud } = await import("../src/tinycloud.js");
-const { RENEWAL_LEASE_SECONDS, loadRenewalReceipt } = await import("../src/renewal.js");
+const { RENEWAL_TIERS, loadRenewalReceipt, renewalAskFor, renewalTierFor, sessionExpirationMsFor } = await import("../src/renewal.js");
 const { createRestoreClient, restoreSavedSession, signOutOfTinyCloud } = await import("../src/restore.js");
 const { FOOD_MANIFEST, INSIGHT_MANIFEST, PAIN_MANIFEST, encryptionNetworkId } = await import("../src/manifests.js");
 
@@ -22,8 +22,7 @@ const { FOOD_MANIFEST, INSIGHT_MANIFEST, PAIN_MANIFEST, encryptionNetworkId } = 
 const owner = privateKeyToAccount(`0x${"1".padStart(64, "0")}`);
 const address = owner.address;
 const host = "https://node.example.test";
-// `keepSignedIn: true` is the person ticking the in-app choice before connecting.
-const options = { host, openKeyHost: "https://openkey.example.test", keepSignedIn: true };
+const options = { host, openKeyHost: "https://openkey.example.test" };
 
 // Food Tracker's sign-in grant carries decrypt on the owner's encryption network, which the node must hold.
 const networkId = encryptionNetworkId(address);
@@ -134,7 +133,7 @@ function fakeOpenKey({ lease = "none", narrow = false } = {}) {
       };
       if (lease !== "none") {
         const { cid } = await cacaoFromSiwe(owner, request.siwe);
-        const made = await leaseReceipt(cid, owner, lease === "valid" ? {} : lease);
+        const made = await leaseReceipt(cid, owner, { leaseSeconds: request.renewal?.leaseLifetimeSeconds, ...(lease === "valid" ? {} : lease) });
         published = made.receipt.receipt.nodeIdentity;
         leases.add(made.receipt.receipt.leaseAuthorization);
         result.renewalChoice = "accepted";
@@ -151,41 +150,51 @@ function fakeOpenKey({ lease = "none", narrow = false } = {}) {
 
 const storedSession = (manifest) => globalThis.localStorage.getItem(`tinyapps:${manifest.app_id}:session:${address.toLowerCase()}`);
 
-// Ticked, every app (Food Tracker's grant carries secrets decrypt) asks for exactly the 7-day lease, with no
-// purpose so OpenKey leaves its own box unticked, in a window OpenKey can return it through, and keeps the lease
-// the node admitted beside the saved session.
-for (const manifest of [INSIGHT_MANIFEST, FOOD_MANIFEST]) {
+const DAY = 24 * 60 * 60;
+// Each app's tier: what it asks OpenKey for, and how long its session is signed for.
+const TIERS = [
+  [PAIN_MANIFEST, { purpose: "standing", leaseDays: 90, sessionDays: 7 }],
+  [INSIGHT_MANIFEST, { purpose: "standing", leaseDays: 90, sessionDays: 7 }],
+  [FOOD_MANIFEST, { purpose: undefined, leaseDays: 7, sessionDays: 1 }],
+];
+
+// The ask is always sent, with exactly the keys OpenKey accepts: `purpose` only where the tier names one.
+for (const [manifest, tier] of TIERS) {
+  assert.deepEqual(
+    renewalAskFor(manifest),
+    tier.purpose ? { version: 1, leaseLifetimeSeconds: tier.leaseDays * DAY, purpose: tier.purpose } : { version: 1, leaseLifetimeSeconds: tier.leaseDays * DAY },
+  );
+  assert.equal(sessionExpirationMsFor(manifest), tier.sessionDays * DAY * 1000);
+  assert.equal(RENEWAL_TIERS[manifest.app_id], renewalTierFor(manifest));
+}
+
+// Every app asks in a window OpenKey can return the lease through, gets the session length of its tier signed,
+// has the node admit the lease and keeps it beside the saved session.
+for (const [manifest, tier] of TIERS) {
   reset();
   const openkey = fakeOpenKey({ lease: "valid" });
   const signedIn = await connectOpenKeyTinyCloud(manifest, { ...options, openkey });
-  assert.deepEqual(openkey.calls.authorize[0].request.renewal, { version: 1, leaseLifetimeSeconds: 604800 });
-  assert.equal("purpose" in openkey.calls.authorize[0].request.renewal, false);
-  assert.equal(leaseCalls().length, 1, `${manifest.app_id}: the node was sent the lease`);
-  assert.ok(loadRenewalReceipt(manifest, address), `${manifest.app_id}: the receipt is kept`);
-  assert.equal(signedIn.renewsUntil, loadRenewalReceipt(manifest, address).receipt.leaseExpiresAt);
-}
-assert.equal(RENEWAL_LEASE_SECONDS, 604800);
-{
-  reset();
-  const openkey = fakeOpenKey({ lease: "valid" });
-  const signedIn = await connectOpenKeyTinyCloud(PAIN_MANIFEST, { ...options, openkey });
   const [{ request, opts }] = openkey.calls.authorize;
-  assert.deepEqual(request.renewal, { version: 1, leaseLifetimeSeconds: 604800 });
-  assert.equal("purpose" in request.renewal, false);
+  assert.deepEqual(request.renewal, renewalAskFor(manifest), `${manifest.app_id}: the ask`);
+  assert.equal("purpose" in request.renewal, tier.purpose !== undefined, `${manifest.app_id}: purpose`);
+  assert.equal(request.renewal.purpose, tier.purpose);
   assert.equal(opts.mode, "iframe");
   assert.equal(request.expiryChangeable ?? opts.expiryChangeable, true);
   assert.equal(openkey.calls.signMessage, 0);
-  assert.equal(leaseCalls().length, 1, "the node was sent the lease once");
-  const receipt = loadRenewalReceipt(PAIN_MANIFEST, address);
+  assert.equal(leaseCalls().length, 1, `${manifest.app_id}: the node was sent the lease once`);
+  const receipt = loadRenewalReceipt(manifest, address);
   assert.equal(receipt.receipt.leaseAuthorization, leaseCalls()[0].authorization.replace(/^Bearer /i, ""));
+  assert.equal(receipt.approvedLeaseLifetimeSeconds, tier.leaseDays * DAY);
   assert.equal(signedIn.renewsUntil, receipt.receipt.leaseExpiresAt);
-  assert.ok(storedSession(PAIN_MANIFEST), "the session is kept for a reload to restore");
-  // The session lasts the seven days asked for.
-  const expiresAt = Date.parse(JSON.parse(storedSession(PAIN_MANIFEST)).expiresAt);
-  assert.ok(Math.abs(expiresAt - (Date.now() + 7 * 24 * 60 * 60 * 1000)) < 5 * 60 * 1000);
+  assert.ok(storedSession(manifest), `${manifest.app_id}: the session is kept for a reload to restore`);
+  // The session is signed for the tier's length, in the message OpenKey signs and in the saved record.
+  const signedEnd = Date.parse(/Expiration Time: (.+)/.exec(request.siwe)[1]);
+  assert.ok(Math.abs(signedEnd - (Date.now() + tier.sessionDays * DAY * 1000)) < 5 * 60 * 1000, `${manifest.app_id}: signed end`);
+  const expiresAt = Date.parse(JSON.parse(storedSession(manifest)).expiresAt);
+  assert.ok(Math.abs(expiresAt - (Date.now() + tier.sessionDays * DAY * 1000)) < 5 * 60 * 1000, `${manifest.app_id}: saved end`);
   // The receipt is kept outside the SDK's own session prefix, and per app.
   assert.ok(savedSessionKeys().every((key) => !key.startsWith("tinycloud:session:")));
-  assert.equal(loadRenewalReceipt(INSIGHT_MANIFEST, address), null);
+  for (const [other] of TIERS) if (other !== manifest) assert.equal(loadRenewalReceipt(other, address), null);
 }
 
 // No lease returned (owner unticked it, flag off, an OpenKey without renewal): the sign-in is finite. No node is
@@ -200,34 +209,26 @@ assert.equal(RENEWAL_LEASE_SECONDS, 604800);
   assert.ok(storedSession(PAIN_MANIFEST), "the finite session is still kept until its signed end");
 }
 
-// Unticked (the default), for every app: no renewal ask at all, whatever OpenKey would return; a finite sign-in
-// with nothing saved, nothing admitted and nothing kept.
-for (const manifest of [PAIN_MANIFEST, INSIGHT_MANIFEST, FOOD_MANIFEST]) {
-  for (const unticked of [{ keepSignedIn: false }, { keepSignedIn: undefined }, { keepSignedIn: "yes" }, { keepSignedIn: undefined, omitted: true }]) {
-    reset();
-    const openkey = fakeOpenKey({ lease: "valid" });
-    const { omitted, ...choice } = unticked;
-    const given = { ...options, ...choice, openkey };
-    if (omitted) delete given.keepSignedIn;
-    const signedIn = await connectOpenKeyTinyCloud(manifest, given);
-    assert.equal("renewal" in openkey.calls.authorize[0].request, false, `${manifest.app_id}: no renewal ask`);
-    assert.notEqual(openkey.calls.authorize[0].request.expiryChangeable, true);
-    assert.equal(signedIn.renewsUntil, null);
-    assert.equal(nodeKeyCalls().length, 0);
-    assert.equal(leaseCalls().length, 0);
-    assert.equal(storedSession(manifest), null);
-    assert.equal(loadRenewalReceipt(manifest, address), null);
-    assert.deepEqual(savedSessionKeys(), []);
-  }
+// A lease longer than the tier's own lease is refused (it checks out otherwise): not sent, not kept. Food Tracker's
+// lease is 7 days, so what Pain Tracker accepts is too long for it.
+for (const [manifest, tooLongDays] of [[PAIN_MANIFEST, 91], [INSIGHT_MANIFEST, 91], [FOOD_MANIFEST, 8], [FOOD_MANIFEST, 90]]) {
+  reset();
+  const signedIn = await connectOpenKeyTinyCloud(manifest, { ...options, openkey: fakeOpenKey({ lease: { leaseSeconds: tooLongDays * DAY } }) });
+  assert.equal(signedIn.renewsUntil, null, `${manifest.app_id} ${tooLongDays} d`);
+  assert.equal(leaseCalls().length, 0);
+  assert.equal(loadRenewalReceipt(manifest, address), null);
 }
 
-// A lease longer than the 7 days asked for is refused (the lease checks out otherwise): not sent, not kept.
-{
+// Unticked in OpenKey's own box (no renewal in the result): finite, with the tier's session length and no receipt.
+for (const [manifest, tier] of TIERS) {
   reset();
-  const signedIn = await connectOpenKeyTinyCloud(PAIN_MANIFEST, { ...options, openkey: fakeOpenKey({ lease: { leaseSeconds: 8 * 86_400 } }) });
+  const signedIn = await connectOpenKeyTinyCloud(manifest, { ...options, openkey: fakeOpenKey({ lease: "none" }) });
   assert.equal(signedIn.renewsUntil, null);
+  assert.equal(nodeKeyCalls().length, 0);
   assert.equal(leaseCalls().length, 0);
-  assert.equal(loadRenewalReceipt(PAIN_MANIFEST, address), null);
+  assert.equal(loadRenewalReceipt(manifest, address), null);
+  const expiresAt = Date.parse(JSON.parse(storedSession(manifest)).expiresAt);
+  assert.ok(Math.abs(expiresAt - (Date.now() + tier.sessionDays * DAY * 1000)) < 5 * 60 * 1000, `${manifest.app_id}: finite session end`);
 }
 
 // A lease that does not check out is refused: the sign-in goes on finite, the lease is not sent to the node or kept.
@@ -323,6 +324,65 @@ for (const [label, lease] of [
   });
   assert.equal(restored.kind, "restored");
   assert.equal(restored.renewsUntil, null);
+}
+
+// A reload past Food Tracker's one-day session (day two) restores only through its lease: without one the person
+// is signed out, with one it restores through the lease. Pain Tracker's session is signed for 7 days, so on day
+// two it restores plainly with no lease.
+const dayTwo = async (run) => {
+  const clock = Date.now;
+  Date.now = () => clock() + 2 * DAY * 1000;
+  try {
+    return await run();
+  } finally {
+    Date.now = clock;
+  }
+};
+const restoreNow = (manifest, overrides = (client) => client) =>
+  restoreSavedSession(manifest, {
+    createClient: async (savedAddress) => overrides(await createRestoreClient(manifest, savedAddress, options)),
+    isOffline: () => false,
+  });
+{
+  reset();
+  await connectOpenKeyTinyCloud(FOOD_MANIFEST, { ...options, openkey: fakeOpenKey({ lease: "none" }) });
+  assert.ok(storedSession(FOOD_MANIFEST));
+  assert.deepEqual(await dayTwo(() => restoreNow(FOOD_MANIFEST)), { kind: "signedOut" }, "Food, no lease: signed out past day one");
+  assert.equal(storedSession(FOOD_MANIFEST), null);
+}
+{
+  reset();
+  await connectOpenKeyTinyCloud(PAIN_MANIFEST, { ...options, openkey: fakeOpenKey({ lease: "none" }) });
+  const restored = await dayTwo(() => restoreNow(PAIN_MANIFEST));
+  assert.equal(restored.kind, "restored", "Pain, no lease: its 7-day session still restores on day two");
+  assert.equal(restored.renewsUntil, null);
+}
+for (const manifest of [FOOD_MANIFEST, PAIN_MANIFEST]) {
+  reset();
+  await connectOpenKeyTinyCloud(manifest, { ...options, openkey: fakeOpenKey({ lease: "valid" }) });
+  // The node's own renewal exchange is the SDK's business: stand in for its answer, and check the restore was
+  // asked through the lease this sign-in kept. Food's session is past its end on day two, so only it needs the lease.
+  const receipt = loadRenewalReceipt(manifest, address);
+  const asked = { plain: 0, lease: [] };
+  const restored = await dayTwo(() =>
+    restoreNow(manifest, (client) => {
+      client.space = () => ({ kv: { list: async () => ({ ok: true, data: { keys: [] } }) } });
+      const plain = client.restoreSession.bind(client);
+      client.restoreSession = async (...args) => (asked.plain += 1, plain(...args));
+      client.restoreSessionWithRenewal = async (lease, who) => (asked.lease.push([lease, who]), { status: "restored", session: { address: who } });
+      return client;
+    }),
+  );
+  assert.equal(restored.kind, "restored", `${manifest.app_id}: restored on day two`);
+  assert.equal(restored.address.toLowerCase(), address.toLowerCase());
+  if (manifest === FOOD_MANIFEST) {
+    assert.equal(asked.plain, 0);
+    assert.equal(asked.lease.length, 1, "Food: restored through the lease");
+    assert.equal(asked.lease[0][0], receipt.receipt.leaseAuthorization);
+    assert.equal(String(asked.lease[0][1]).toLowerCase(), address.toLowerCase());
+  } else {
+    assert.equal(asked.lease.length, 0, "Pain: still inside its signed session, no lease needed");
+  }
 }
 
 console.log("renewal sign-in tests passed");
