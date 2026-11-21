@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@openkey/sdk": "0.12.2",
-    "@tinycloud/sdk-core": "3.11.2",
-    "@tinycloud/web-sdk": "3.11.4",
+    "@tinycloud/sdk-core": "3.13.0",
+    "@tinycloud/web-sdk": "3.13.0",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1"
   }
