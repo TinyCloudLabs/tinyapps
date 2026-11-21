@@ -28,7 +28,7 @@ function describeGrant(manifest, { resource }) {
   return "your TinyCloud account setup";
 }
 
-// Draft copy, Monica words it.
+// Draft copy, the copy owner words it.
 export function narrowedApprovalMessage(manifest, missing) {
   const needs = [...new Set(missing.map((grant) => describeGrant(manifest, grant)))];
   const list = needs.length > 1 ? `${needs.slice(0, -1).join(", ")} and ${needs.at(-1)}` : needs[0];

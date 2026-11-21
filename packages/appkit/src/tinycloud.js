@@ -15,7 +15,7 @@ import {
 const DEFAULT_HOST = "https://node.tinycloud.xyz";
 const DEFAULT_OPENKEY_HOST = "https://openkey.so";
 const secretsSigners = new WeakMap();
-// Draft copy, Monica words it.
+// Draft copy, the copy owner words it.
 export const REENTER_API_KEY_MESSAGE =
   "Your saved Anthropic API key can't be read after the TinyCloud update. Please enter your Anthropic API key again in Settings.";
 
