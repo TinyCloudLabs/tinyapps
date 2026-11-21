@@ -70,11 +70,33 @@ const descriptor = {
 
 const invoked = [];
 let storedEnvelope;
+// 3.13 signs a non-first-party app in only for an owner with a registered account: the registry answers an owner-signed
+// v2 location record that routes the owner's spaces to the stub node.
+const stubNodeDid = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+const locationFields = {
+  version: 2,
+  subject: `did:pkh:eip155:1:${owner}`,
+  nodes: [{ did: stubNodeDid, url: "https://node.example" }],
+  spaces: ["applications", "default", "secrets"].map((name) => ({
+    space: `tinycloud:pkh:eip155:1:${owner}:${name}`,
+    nodes: [{ did: stubNodeDid, mode: "read-write" }],
+  })),
+  encryptionNode: stubNodeDid,
+  updated_at: "2026-07-14T00:00:00.000Z",
+  sequence: 1,
+};
+// The registry cache the SDK keeps wants Web Locks, which Node lacks: a lock that is always granted.
+Object.defineProperty(globalThis.navigator, "locks", {
+  configurable: true,
+  value: { request: async (_name, ...rest) => rest.at(-1)({}) },
+});
+const locationRecord = { ...locationFields, signature: await account.signMessage({ message: JSON.stringify(locationFields) }) };
 const json = (body, init) => new Response(JSON.stringify(body), { ...init, headers: { "content-type": "application/json" } });
 globalThis.fetch = async (input, init) => {
   const url = new URL(String(input instanceof Request ? input.url : input));
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-  if (url.pathname === "/info") return json({ protocol: 1, version: "1.26.7", features: [] });
+  if (url.pathname === "/info") return json({ protocol: 1, version: "1.26.7", features: [], nodeId: stubNodeDid });
+  if (url.pathname === "/.well-known/tinycloud/node-keys") return json({ nodeDid: stubNodeDid });
   if (url.pathname === "/delegate") return json({ activated: ["stub"], skipped: [] });
   if (url.pathname.startsWith("/encryption/networks/") && !url.pathname.endsWith("/decrypt")) return json(descriptor);
   if (url.pathname === "/invoke" || url.pathname.endsWith("/decrypt")) {
@@ -91,6 +113,7 @@ globalThis.fetch = async (input, init) => {
     if (url.pathname === "/invoke" && writes) return json({ written: [], count: 0 });
     return new Response("stub node", { status: url.pathname === "/invoke" ? 404 : 403 });
   }
+  if (url.pathname.startsWith("/v2/locations/")) return json({ record: locationRecord });
   return new Response("stub node", { status: 404 });
 };
 
