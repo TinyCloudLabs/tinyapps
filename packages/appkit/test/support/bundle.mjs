@@ -28,6 +28,18 @@ export async function bundle(entrySource, resolveDir) {
       {
         name: "fake-sign-in",
         setup(buildApi) {
+          // A test may also hand the saved-session restore its storage and client: `globalThis.__restoreDeps` is
+          // the `deps` argument `restoreSavedSession` takes when its caller gives none (the hook gives none).
+          buildApi.onLoad({ filter: /packages[\\/]appkit[\\/]src[\\/]restore\.js$/ }, (args) => {
+            const source = readFileSync(args.path, "utf8");
+            const marker = "export async function restoreSavedSession(manifest, deps = {}) {";
+            if (!source.includes(marker)) throw new Error("restoreSavedSession moved: update support/bundle.mjs");
+            return {
+              contents: source.replace(marker, "export async function restoreSavedSession(manifest, deps = globalThis.__restoreDeps ?? {}) {"),
+              loader: "js",
+              resolveDir: dirname(args.path),
+            };
+          });
           buildApi.onLoad({ filter: /packages[\\/]appkit[\\/]src[\\/]tinycloud\.js$/ }, (args) => {
             const source = readFileSync(args.path, "utf8");
             const marker = "export async function connectOpenKeyTinyCloud(";
