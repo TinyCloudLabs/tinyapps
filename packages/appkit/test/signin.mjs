@@ -2,10 +2,43 @@ import assert from "node:assert/strict";
 
 import "./support/browser.mjs";
 
+import { privateKeyToAccount } from "viem/accounts";
+
 const { REENTER_API_KEY_MESSAGE, connectOpenKeyTinyCloud, getAnthropicApiKey } = await import("../src/tinycloud.js");
 const { FOOD_MANIFEST } = await import("../src/manifests.js");
 
-const address = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
+const account = privateKeyToAccount(`0x${"1".padStart(64, "0")}`);
+const address = account.address;
+
+// 3.13 signs a non-first-party app in only for an owner with a registered account: the registry answers an owner-signed
+// v2 location record that routes the owner's spaces to the stub node.
+const stubNodeDid = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+const locationFields = {
+  version: 2,
+  subject: `did:pkh:eip155:1:${address}`,
+  nodes: [{ did: stubNodeDid, url: "https://node.example" }],
+  spaces: ["applications", "default", "secrets"].map((name) => ({
+    space: `tinycloud:pkh:eip155:1:${address}:${name}`,
+    nodes: [{ did: stubNodeDid, mode: "read-write" }],
+  })),
+  encryptionNode: stubNodeDid,
+  updated_at: "2026-07-14T00:00:00.000Z",
+  sequence: 1,
+};
+const locationRecord = { ...locationFields, signature: await account.signMessage({ message: JSON.stringify(locationFields) }) };
+// The registry cache the SDK keeps wants Web Locks, which Node lacks: a lock that is always granted.
+Object.defineProperty(globalThis.navigator, "locks", {
+  configurable: true,
+  value: { request: async (_name, ...rest) => rest.at(-1)({}) },
+});
+const json = (body) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+globalThis.fetch = async (input) => {
+  const url = new URL(String(input instanceof Request ? input.url : input));
+  if (url.pathname.startsWith("/v2/locations/")) return json({ record: locationRecord });
+  if (url.pathname === "/info") return json({ protocol: 1, version: "1.26.7", features: [], nodeId: stubNodeDid });
+  if (url.pathname === "/.well-known/tinycloud/node-keys") return json({ nodeDid: stubNodeDid });
+  return new Response("stub node", { status: 404 });
+};
 
 function fakeOpenKey(authorize) {
   const calls = { connect: 0, authorize: [], signMessage: 0 };
@@ -61,7 +94,12 @@ const options = { host: "https://node.example.test", openKeyHost: "https://openk
     const dropped = Object.keys(payload.att).find((resource) => resource.includes(":secrets/kv/vault/secrets/"));
     assert.ok(dropped, "request asks for the secret read");
     delete payload.att[dropped];
-    return siwe.replace(recap, Buffer.from(JSON.stringify(payload)).toString("base64url"));
+    // 3.13 checks the statement line against the ReCap, so the dropped permission leaves the statement too.
+    let count = 0;
+    return siwe
+      .replace(recap, Buffer.from(JSON.stringify(payload)).toString("base64url"))
+      .replace(/ \(\d+\) '[^']+': [^.]*? for '([^']+)'\./g, (clause, resource) => (resource === dropped ? "" : clause))
+      .replace(/ \(\d+\) /g, () => ` (${++count}) `);
   };
   const openkey = fakeOpenKey(async (request) => ({
     protocolVersion: 1,
