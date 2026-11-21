@@ -1,3 +1,5 @@
+import { pkhDid } from "@tinycloud/sdk-core";
+
 export const APP_IDS = {
   food: "xyz.tinycloud.tinyapps.food",
   pain: "xyz.tinycloud.tinyapps.pain",
@@ -131,4 +133,30 @@ export function recordsPrefix(appId, recordKind) {
   if (recordKind === "meal") return `${appId}/records/meals/`;
   if (recordKind === "pain") return `${appId}/records/events/`;
   throw new Error(`Unknown record kind: ${recordKind}`);
+}
+
+export function encryptionNetworkId(address, chainId = 1) {
+  return `urn:tinycloud:encryption:${pkhDid(address, chainId)}:default`;
+}
+
+/**
+ * The manifest to sign in with for one owner. The 3.x secrets service decrypts through the owner's
+ * default encryption network, so a manifest that reads secrets also needs that network's decrypt
+ * permission (Secret Manager's pattern). The network id carries the owner's DID, so it cannot sit in
+ * the static manifest; the published manifest stays the static one.
+ */
+export function manifestForOwner(manifest, address, chainId = 1) {
+  if (!manifest.secrets || Object.keys(manifest.secrets).length === 0) return manifest;
+  return {
+    ...manifest,
+    permissions: [
+      ...(manifest.permissions ?? []),
+      {
+        service: "tinycloud.encryption",
+        path: encryptionNetworkId(address, chainId),
+        actions: ["decrypt"],
+        skipPrefix: true,
+      },
+    ],
+  };
 }

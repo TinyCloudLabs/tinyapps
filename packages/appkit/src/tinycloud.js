@@ -1,29 +1,73 @@
+import "./buffer-global.js";
 import { OpenKey, OpenKeyProvider } from "@openkey/sdk";
 import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sdk";
-import { providers } from "ethers";
 
+import { refuseNarrowedApproval } from "./approval.js";
 import { normalizeStoredRecord } from "./analysis.js";
-import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, registryPathFor } from "./manifests.js";
+import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, manifestForOwner, registryPathFor } from "./manifests.js";
+import { admitSignInRenewal, appSessionStorage, clearRenewalReceipt, openKeyRenewalClient, renewalAskFor, sessionExpirationMsFor } from "./renewal.js";
 
 const DEFAULT_HOST = "https://node.tinycloud.xyz";
 const DEFAULT_OPENKEY_HOST = "https://openkey.so";
 const secretsSigners = new WeakMap();
+// Draft copy, the copy owner words it.
+export const REENTER_API_KEY_MESSAGE =
+  "Your saved Anthropic API key can't be read. Enter it again in Settings.";
 
+/** Where the apps reach TinyCloud and the OpenKey sign-in, and the SIWE domain they sign in under. */
+export function tinycloudSettings(options = {}) {
+  return {
+    host: options.host || import.meta.env?.VITE_TINYCLOUD_HOST || DEFAULT_HOST,
+    openKeyHost: options.openKeyHost || import.meta.env?.VITE_OPENKEY_HOST || DEFAULT_OPENKEY_HOST,
+    domain: globalThis.window?.location?.hostname || "tinyapps.local",
+  };
+}
+
+/**
+ * Sign in through OpenKey. It always asks OpenKey for a renewal lease (`renewalAskFor`) and keeps the session
+ * saved so a reload restores it; whether to renew is the owner's choice in OpenKey's own box. The result's
+ * `renewsUntil` is the end of the lease the node admitted, or null: without a lease (unticked at OpenKey, an
+ * OpenKey without renewal, a lease that fails its checks or the node's refusal) the sign-in is finite and
+ * nothing is kept for renewal.
+ */
 export async function connectOpenKeyTinyCloud(manifest, options = {}) {
-  const host = options.host || import.meta.env.VITE_TINYCLOUD_HOST || DEFAULT_HOST;
-  const openKeyHost = options.openKeyHost || import.meta.env.VITE_OPENKEY_HOST || DEFAULT_OPENKEY_HOST;
-  const domain = globalThis.window?.location?.hostname || "tinyapps.local";
+  const { host, openKeyHost, domain } = tinycloudSettings(options);
+  const sessionExpirationMs = sessionExpirationMsFor(manifest);
 
-  const openkey = new OpenKey({ host: openKeyHost, appName: manifest.name });
-  const authResult = await openkey.connect();
-  const eip1193Provider = new OpenKeyProvider(openkey, authResult);
-  const web3Provider = new providers.Web3Provider(eip1193Provider);
-
-  const tcw = await TinyCloudWeb.create({
+  const openkey = refuseNarrowedApproval(
+    options.openkey ?? new OpenKey({ host: openKeyHost, appName: manifest.name }),
     manifest,
+  );
+  const authResult = await openkey.connect();
+
+  // What OpenKey said about renewal, and when it arrived on this device's monotonic clock: the lease is sent
+  // to the node only within a minute of it.
+  let renewalOutcome = {};
+  let renewalArrivedAt;
+  // Renewal needs a sign-in window OpenKey can return a lease through (not redirect) and a session end the
+  // owner may change, within the session length of the app's tier (`maxExpiresAt` limits a changed end only).
+  const openkeySignIn = {
+    client: openKeyRenewalClient(openkey, renewalAskFor(manifest), (outcome) => {
+      renewalOutcome = outcome;
+      renewalArrivedAt = performance.now();
+    }),
+    mode: "iframe",
+    expiryChangeable: true,
+    maxExpiresAt: () => Date.now() + sessionExpirationMs,
+  };
+
+  // Sign-in goes through OpenKey's versioned `authorizeTinyCloud` (config.openkey):
+  // OpenKey reviews and signs the session grant. The provider below only answers
+  // account and chain lookups; sign-in never calls its `personal_sign`.
+  const tcw = await TinyCloudWeb.create({
+    manifest: manifestForOwner(manifest, authResult.address),
     tinycloudHosts: [host],
     domain,
-    provider: web3Provider,
+    provider: new OpenKeyProvider(openkey, authResult),
+    openkey: openkeySignIn,
+    sessionExpirationMs,
+    persistSession: true,
+    sessionStorageKeyPrefix: appSessionStorage(manifest).keyPrefix,
     autoCreateSpace: true,
     spacePrefix: SPACE_APPLICATIONS,
     spaceCreationHandler: new AutoApproveSpaceCreationHandler(),
@@ -33,15 +77,86 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     },
   });
   const session = await tcw.signIn();
-  secretsSigners.set(tcw, web3Provider.getSigner());
-  await publishManifest(tcw, manifest);
+  // The sign-in has saved a session and the lease below saves a receipt: when a later step throws, the sign-in
+  // fails and what it saved must not stay (a reload would sign the person in from it).
+  let renewsUntil;
+  try {
+    // OpenKey records the lease but does not send it to the node: the session's node admits it here, else this
+    // sign-in runs to its signed end.
+    renewsUntil = await admitSignInRenewal({
+      tcw,
+      manifest,
+      address: authResult.address,
+      renewal: renewalOutcome.renewal,
+      arrivedAt: renewalArrivedAt,
+    });
+    // Secrets unlock derives its key from a byte-exact signature, a separate use from sign-in.
+    secretsSigners.set(tcw, {
+      signMessage: async (message) => (await openkey.signMessage({ message, keyId: authResult.keyId })).signature,
+    });
+    await publishManifest(tcw, manifest);
+  } catch (error) {
+    await undoSignIn(manifest, tcw, authResult.address);
+    throw error;
+  }
+
   return {
     tcw,
     session,
     openkey,
     openKeyAddress: authResult.address,
     openKeyKeyId: authResult.keyId,
+    renewsUntil,
   };
+}
+
+// Draft copy, the copy owner words it.
+export const SECRETS_ACCOUNT_MESSAGE =
+  "Your saved Anthropic API key can only be unlocked by the OpenKey account that saved it. Sign out, then sign in with that account.";
+// Draft copy, the copy owner words it.
+export const SECRETS_UNLOCK_MESSAGE = "Couldn't unlock your saved Anthropic API key. Approve the OpenKey prompt and try again.";
+
+/**
+ * A restored session has no OpenKey client, so no secrets signer. Unlocking secrets needs a byte-exact signature
+ * from OpenKey: this gives the restored client a signer that asks for one only when secrets are first used,
+ * connecting a fresh OpenKey client (the person approves in its window, as at sign-in) and checking it is the
+ * saved account. A refusal or a different account fails with a plain message; nothing resolves to an empty key.
+ */
+export function attachRestoredSecretsSigner(tcw, address, createOpenKey) {
+  let connected = null;
+  secretsSigners.set(tcw, {
+    signMessage: async (message) => {
+      try {
+        connected ??= (async () => {
+          const openkey = createOpenKey();
+          return { openkey, authResult: await openkey.connect() };
+        })();
+        const { openkey, authResult } = await connected;
+        if (String(authResult.address).toLowerCase() !== String(address).toLowerCase()) throw new Error(SECRETS_ACCOUNT_MESSAGE);
+        return (await openkey.signMessage({ message, keyId: authResult.keyId })).signature;
+      } catch (error) {
+        connected = null;
+        throw error instanceof Error && error.message === SECRETS_ACCOUNT_MESSAGE ? error : new Error(SECRETS_UNLOCK_MESSAGE);
+      }
+    },
+  });
+}
+
+/** Undoes what a sign-in that then failed saved: signs the client out and clears the saved session and receipt. */
+async function undoSignIn(manifest, tcw, address) {
+  try {
+    clearRenewalReceipt(manifest, address);
+  } catch {
+    // The saved session is cleared below all the same.
+  }
+  try {
+    await tcw.signOut();
+  } catch {
+    // The saved session is cleared below whatever the client says.
+  }
+  await appSessionStorage(manifest)
+    .clear(address)
+    .catch(() => undefined);
 }
 
 export async function publishManifest(tcw, manifest) {
@@ -99,7 +214,13 @@ export async function putPhoto(tcw, appId, id, photo) {
 export async function getAnthropicApiKey(tcw) {
   await unlockSecrets(tcw);
   const result = await tcw.secrets.get(ANTHROPIC_SECRET_NAME);
-  if (!result.ok) return "";
+  if (!result.ok) {
+    // A key saved by the older appkit sits in the previous vault format and can't be decrypted.
+    if (result.error?.code === "DECRYPTION_FAILED") throw new Error(REENTER_API_KEY_MESSAGE);
+    // An ended session is no missing key: say so, never an empty key.
+    if (isSessionEndedError(result.error)) throw new Error("read Anthropic API key failed: session ended", { cause: result.error });
+    return "";
+  }
   const value = kvValue(result.data);
   return typeof value === "string" ? value : "";
 }
@@ -120,7 +241,23 @@ export function applicationsKV(tcw) {
 export function unwrap(result, label) {
   if (result?.ok) return result.data;
   const message = result?.error?.message || result?.error?.code || "unknown TinyCloud error";
-  throw new Error(`${label} failed: ${message}`);
+  // The SDK's own error rides along as the cause, so a caller can tell a session that ended from any other failure.
+  throw new Error(`${label} failed: ${message}`, { cause: result?.error });
+}
+
+/**
+ * Did this failure come from the session having ended? The SDK reports a node 401/403 as `AUTH_UNAUTHORIZED`
+ * (a session past its signed end is refused that way) and its own expiry as `AUTH_EXPIRED`; the HTTP status
+ * rides in `meta.status`. Nothing else counts: any other error keeps the app's usual display. Follows `cause`.
+ */
+export function isSessionEndedError(error) {
+  for (let depth = 0; depth < 4 && error != null && typeof error === "object"; depth++) {
+    if (error.code === "AUTH_UNAUTHORIZED" || error.code === "AUTH_EXPIRED") return true;
+    const status = error.meta?.status ?? error.status;
+    if (status === 401 || status === 403) return true;
+    error = error.cause;
+  }
+  return false;
 }
 
 async function unlockSecrets(tcw) {

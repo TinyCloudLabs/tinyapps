@@ -3,23 +3,25 @@ import { createRoot } from "react-dom/client";
 import { RefreshCw, Sparkles } from "lucide-react";
 
 import {
-  APP_IDS,
   AppShell,
   EmptyState,
   INSIGHT_MANIFEST,
+  RenewalNote,
+  RestoringScreen,
+  SessionEndedPrompt,
+  SignOutButton,
   SignInScreen,
   analyzeCorrelations,
   fmtDay,
   fmtTime,
-  listPublishedManifests,
-  listRecords,
-  recordsPrefix,
   useTinyCloudApp,
 } from "@tinyapps/appkit";
 import "@tinyapps/appkit/styles.css";
 
-const MEALS_PREFIX = recordsPrefix(APP_IDS.food, "meal");
-const EVENTS_PREFIX = recordsPrefix(APP_IDS.pain, "pain");
+import { loadInsightData } from "./actions.js";
+
+// Draft copy, the copy owner words it.
+const SESSION_ENDED_READ_MESSAGE = "Your sign-in ended. Sign in again to load your data.";
 
 function InsightApp() {
   const auth = useTinyCloudApp(INSIGHT_MANIFEST);
@@ -34,14 +36,13 @@ function InsightApp() {
     setLoading(true);
     setError("");
     try {
-      const [nextManifests, nextMeals, nextEvents] = await Promise.all([
-        listPublishedManifests(auth.tcw),
-        listRecords(auth.tcw, MEALS_PREFIX),
-        listRecords(auth.tcw, EVENTS_PREFIX),
-      ]);
-      setManifests(nextManifests);
-      setMeals(nextMeals);
-      setEvents(nextEvents);
+      // If the session ended, the prompt signs in again and reads once more.
+      await auth.runWithSession(async (tcw) => {
+        const next = await loadInsightData(tcw);
+        setManifests(next.manifests);
+        setMeals(next.meals);
+        setEvents(next.events);
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -53,6 +54,14 @@ function InsightApp() {
     refresh();
   }, [auth.tcw, auth.session]);
 
+  if (!auth.ready) {
+    return (
+      <AppShell app="insight">
+        <RestoringScreen />
+      </AppShell>
+    );
+  }
+
   if (!auth.session) {
     return (
       <AppShell app="insight">
@@ -62,6 +71,7 @@ function InsightApp() {
           onSignIn={auth.signIn}
           signingIn={auth.signingIn}
           error={auth.error}
+          notice={auth.signOutNotice}
         >
           Food <em>×</em> Pain.
         </SignInScreen>
@@ -78,10 +88,15 @@ function InsightApp() {
           <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}><Sparkles size={13} /> Agent-style reader</div>
           <h1>Food <em>×</em> Pain</h1>
           <div className="date-line">{meals.length} meals · {events.length} events</div>
+          <RenewalNote renewsUntil={auth.renewsUntil} />
         </div>
-        <button className="icon-btn" onClick={refresh} aria-label="Refresh"><RefreshCw size={17} className={loading ? "spin" : ""} /></button>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="icon-btn" onClick={refresh} aria-label="Refresh"><RefreshCw size={17} className={loading ? "spin" : ""} /></button>
+          <SignOutButton onSignOut={auth.signOut} signingOut={auth.signingOut} />
+        </div>
       </header>
       {error && <div className="error" style={{ margin: "0 22px 12px" }}>{error}</div>}
+      <SessionEndedPrompt auth={auth}>{SESSION_ENDED_READ_MESSAGE}</SessionEndedPrompt>
       <main className="scroll-body">
         <div className="section-label">Reading</div>
         <div className="card">

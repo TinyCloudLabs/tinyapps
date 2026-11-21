@@ -8,23 +8,26 @@ import {
   EmptyState,
   FOOD_MANIFEST,
   Pill,
+  RenewalNote,
+  RestoringScreen,
+  SessionEndedPrompt,
   SignInScreen,
+  SignOutButton,
   deleteRecord,
   fileToDataUrl,
   fmtDay,
   fmtTime,
   getAnthropicApiKey,
-  listRecords,
   makeId,
   normalizeMealDraft,
-  putPhoto,
-  putRecord,
   recordsPrefix,
   setAnthropicApiKey,
   todayLabel,
   useTinyCloudApp,
 } from "@tinyapps/appkit";
 import "@tinyapps/appkit/styles.css";
+
+import { analyzeMeal, loadMeals, saveMeal } from "./actions.js";
 
 const MEALS_PREFIX = recordsPrefix(APP_IDS.food, "meal");
 
@@ -40,7 +43,7 @@ function FoodApp() {
     setLoading(true);
     setError("");
     try {
-      setMeals(await listRecords(auth.tcw, MEALS_PREFIX));
+      await auth.runWithSession(async (tcw) => setMeals(await loadMeals(tcw)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -52,6 +55,14 @@ function FoodApp() {
     refresh();
   }, [auth.tcw, auth.session]);
 
+  if (!auth.ready) {
+    return (
+      <AppShell app="food">
+        <RestoringScreen />
+      </AppShell>
+    );
+  }
+
   if (!auth.session) {
     return (
       <AppShell app="food">
@@ -61,6 +72,7 @@ function FoodApp() {
           onSignIn={auth.signIn}
           signingIn={auth.signingIn}
           error={auth.error}
+          notice={auth.signOutNotice}
         >
           What did you <em>eat</em>, and when.
         </SignInScreen>
@@ -74,13 +86,18 @@ function FoodApp() {
         <div>
           <h1>Food <em>Tracker</em></h1>
           <div className="date-line">{todayLabel()}</div>
+          <RenewalNote renewsUntil={auth.renewsUntil} />
         </div>
-        <button className="icon-btn" onClick={() => setView("settings")} aria-label="Settings"><Settings size={17} /></button>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="icon-btn" onClick={() => setView("settings")} aria-label="Settings"><Settings size={17} /></button>
+          <SignOutButton onSignOut={auth.signOut} signingOut={auth.signingOut} />
+        </div>
       </header>
 
       {error && <div className="error" style={{ margin: "0 22px 12px" }}>{error}</div>}
+      <SessionEndedPrompt auth={auth} />
       {view === "home" && <FoodHome meals={meals} loading={loading} />}
-      {view === "capture" && <CaptureMeal tcw={auth.tcw} onSaved={() => { setView("home"); refresh(); }} />}
+      {view === "capture" && <CaptureMeal auth={auth} onSaved={() => { setView("home"); refresh(); }} />}
       {view === "history" && <FoodHistory meals={meals} tcw={auth.tcw} onChanged={refresh} />}
       {view === "settings" && <FoodSettings tcw={auth.tcw} />}
 
@@ -158,7 +175,7 @@ function recordKey(record, index) {
   return record.id || `${record.ts || "record"}-${index}`;
 }
 
-function CaptureMeal({ tcw, onSaved }) {
+function CaptureMeal({ auth, onSaved }) {
   const [photo, setPhoto] = useState("");
   const [draft, setDraft] = useState({ title: "", emoji: "🍽", ingredients: [], portion: "medium", tags: [], notes: "" });
   const [ingredient, setIngredient] = useState("");
@@ -171,15 +188,8 @@ function CaptureMeal({ tcw, onSaved }) {
     setBusy(true);
     setError("");
     try {
-      const apiKey = await getAnthropicApiKey(tcw);
-      const response = await fetch("/api/analyze-food", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ image: photo, apiKey }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Food analysis failed");
-      setDraft(normalizeMealDraft(payload.meal));
+      // If the session ended, the photo and what was typed stay, and the prompt signs in again and reads it once.
+      await auth.runWithSession(async (tcw) => setDraft(await analyzeMeal(tcw, photo)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -200,9 +210,11 @@ function CaptureMeal({ tcw, onSaved }) {
         title,
         ingredients: mergeIngredients(draft.ingredients, parseIngredients(pendingIngredient)),
       });
-      const photoPath = photo ? await putPhoto(tcw, APP_IDS.food, id, { id, dataUrl: photo, createdAt }) : "";
-      await putRecord(tcw, MEALS_PREFIX, { ...normalized, id, ts: Date.now(), createdAt, photoPath, source: photo ? "photo" : "manual" });
-      onSaved();
+      // If the session ended, the entry stays and the prompt signs in again and saves it once.
+      await auth.runWithSession(async (tcw) => {
+        await saveMeal(tcw, { id, createdAt, meal: normalized, photo });
+        onSaved();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
