@@ -10,12 +10,27 @@ import { BrowserSessionStorage } from "@tinycloud/web-sdk";
 // node stays the authority on whether the lease still renews: the SDK's renewal restore asks it before it
 // restores anything.
 
-/** The 90-day standing renewal the apps ask OpenKey to offer at sign-in. */
+/** How long a renewal lease lasts: the one number the ask, the checks and the copy all use. */
+export const RENEWAL_LEASE_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * The renewal the apps ask OpenKey to offer at sign-in, sent only when the person ticks the in-app choice. It
+ * names no purpose, so OpenKey's own renewal box starts unticked too.
+ */
 export const SIGN_IN_RENEWAL_ASK = Object.freeze({
   version: 1,
-  leaseLifetimeSeconds: 90 * 24 * 60 * 60,
-  purpose: "standing",
+  leaseLifetimeSeconds: RENEWAL_LEASE_SECONDS,
 });
+
+const leaseDays = RENEWAL_LEASE_SECONDS / (24 * 60 * 60);
+
+// Draft copy, the copy owner words it.
+export const KEEP_SIGNED_IN_LABEL = `Keep me signed in for up to ${leaseDays} days`;
+
+// Draft copy, the copy owner words it.
+export function keepSignedInWarning(appName, records = "health") {
+  return `While this is ticked, ${appName} can read your ${records} records for up to ${leaseDays} days without asking you again. Tick it only on a device you trust. You can stop it at any time under Renewing permissions in OpenKey settings.`;
+}
 
 /** How long a signed session lasts; the owner may only shorten it in OpenKey's approval. */
 export const SESSION_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -116,7 +131,10 @@ export async function verifiedRenewalLease(value, record) {
       Object.keys(caveats[0]).length !== 0 ||
       Date.parse(lease.expiresAt ?? "") !== Date.parse(receipt.leaseExpiresAt) ||
       !Number.isFinite(originalEnd) ||
-      Date.parse(renewal.approvedAt) >= originalEnd
+      Date.parse(renewal.approvedAt) >= originalEnd ||
+      // A lease longer than the one asked for is refused, whatever OpenKey signed. (The receipt's own parse already
+      // keeps the lease end within its stated lifetime.)
+      !(renewal.approvedLeaseLifetimeSeconds <= RENEWAL_LEASE_SECONDS)
     ) {
       return null;
     }

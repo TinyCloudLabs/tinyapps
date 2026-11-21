@@ -5,11 +5,13 @@ import "./support/browser.mjs";
 import { fixture } from "./support/renewal-fixture.mjs";
 
 const { loadRenewalReceipt, saveRenewalReceipt } = await import("../src/renewal.js");
-const { RESTORE_UNAVAILABLE_MESSAGE, restoreSavedSession } = await import("../src/restore.js");
+const { RESTORE_OFFLINE_MESSAGE, RESTORE_UNAVAILABLE_MESSAGE, isTransientRestoreError, restoreSavedSession } = await import("../src/restore.js");
 const { PAIN_MANIFEST } = await import("../src/manifests.js");
 
-// When a lease-renewed restore fails, the saved session and its receipt are dropped only on an authoritative
-// answer. A failure to reach anything, and any error nobody recognises, keeps both so a reload can retry.
+// When a lease-renewed restore fails, the saved session and its receipt are kept only on a clearly transient
+// failure (network, timeout, 408/429/5xx, offline) so a reload can retry. Every other answer ends the session:
+// a status that is not a restore, any refusal (401/403 or other 4xx), a renewal refusal code, an error nobody
+// recognises, a lapsed lease end.
 // The saved record and the owner-signed lease are real; the SDK client and the saved-session storage are fakes.
 
 const reset = () => {
@@ -44,12 +46,12 @@ async function setup({ status = "renewal-candidate", restore = {}, read, leaseEn
     signOut: async () => void (calls.signOut += 1),
     cleanup: () => undefined,
   };
-  const run = async () => {
-    // A lease past its end renews nothing: the clock reads 91 days on, past the 90-day lease the receipt carries.
+  const run = async ({ offline = false } = {}) => {
+    // A lease past its end renews nothing: the clock reads 8 days on, past the 7-day lease the receipt carries.
     const clock = Date.now;
-    if (leaseEnded) Date.now = () => clock() + 91 * 24 * 60 * 60 * 1000;
+    if (leaseEnded) Date.now = () => clock() + 8 * 24 * 60 * 60 * 1000;
     try {
-      return await restoreSavedSession(PAIN_MANIFEST, { storage, createClient: async () => tcw, isOffline: () => false });
+      return await restoreSavedSession(PAIN_MANIFEST, { storage, createClient: async () => tcw, isOffline: () => offline });
     } finally {
       Date.now = clock;
     }
@@ -68,56 +70,92 @@ const droppedAll = (owner, calls, label) => {
 };
 
 // Transient failures of the lease restore keep the receipt and the saved session.
-for (const [label, restore] of [
+for (const [label, restore, options] of [
   ["network failure", { renewal: { status: "restore-failed", error: new TypeError("Failed to fetch") } }],
+  ["network failure wrapped in a cause", { renewal: { status: "restore-failed", error: new Error("restore failed", { cause: new TypeError("fetch failed") }) } }],
   ["timeout", { renewal: { status: "restore-failed", error: Object.assign(new Error("timed out"), { name: "TimeoutError" }) } }],
-  ["5xx", { renewal: { status: "restore-failed", error: Object.assign(new Error("HTTP 503"), { status: 503 }) } }],
-  ["storage unavailable", { renewal: { status: "storage-unavailable" } }],
+  ["abort", { renewal: { status: "restore-failed", error: Object.assign(new Error("aborted"), { name: "AbortError" }) } }],
+  ["5xx", { renewal: { status: "restore-failed", error: Object.assign(new Error("service down"), { status: 503 }) } }],
+  ["408", { renewal: { status: "restore-failed", error: Object.assign(new Error("slow"), { status: 408 }) } }],
+  ["429", { renewal: { status: "restore-failed", error: Object.assign(new Error("slow down"), { status: 429 }) } }],
+  ["HTTP 502 in the message", { renewal: { status: "restore-failed", error: new Error("HTTP 502 Bad Gateway") } }],
   ["restore throws a network error", { renewalThrows: new TypeError("Failed to fetch") }],
-  // An error nobody recognises is not an answer about the lease.
-  ["unknown error", { renewal: { status: "restore-failed", error: new Error("something unexpected") } }],
-  ["unknown thrown value", { renewalThrows: "boom" }],
-  ["no error at all", { renewal: { status: "restore-failed" } }],
+  // An offline device cannot tell a refusal from a network failure: keep.
+  ["offline, whatever the error", { renewal: { status: "restore-failed", error: new Error("something unexpected") } }, { offline: true }],
 ]) {
   const { owner, calls, run } = await setup({ restore });
-  assert.deepEqual(await run(), { kind: "unavailable", message: RESTORE_UNAVAILABLE_MESSAGE }, label);
+  const outcome = await run(options);
+  assert.equal(outcome.kind, "unavailable", label);
+  assert.equal(outcome.message, options?.offline ? RESTORE_OFFLINE_MESSAGE : RESTORE_UNAVAILABLE_MESSAGE, label);
   assert.equal(calls.renewal, 1, `${label}: restored through the lease`);
   keptAll(owner, calls, label);
 }
 
-// The one live read after a lease restore: an unrecognised failure keeps everything too.
+// The same failures keep a plain restore too.
+{
+  const { owner, calls, run } = await setup({ status: "loaded", restore: { plain: { status: "restore-failed", error: new TypeError("Failed to fetch") } } });
+  assert.equal((await run()).kind, "unavailable");
+  keptAll(owner, calls, "plain network failure");
+}
+
+// The one live read after a lease restore: a failure to reach the node keeps everything, 503 beside 403...
 for (const [label, error] of [
-  ["5xx", { code: "SERVER", meta: { status: 502 } }],
+  ["503", { code: "SERVER", meta: { status: 503 } }],
   ["network", { code: "NETWORK_ERROR", message: "Failed to fetch" }],
-  ["unknown", { code: "WEIRD" }],
+  ["timeout", { name: "TimeoutError", message: "The operation timed out" }],
 ]) {
   const { owner, calls, run } = await setup({ read: async () => ({ ok: false, error }) });
   assert.equal((await run()).kind, "unavailable", `live read ${label}`);
   assert.equal(calls.signOut, 0, `live read ${label}`);
   keptAll(owner, calls, `live read ${label}`);
 }
-
-// Revoked: the node refuses the restored session on the live read (401/403) or refuses the lease by its own code.
-for (const status of [401, 403]) {
-  const { owner, calls, run } = await setup({ read: async () => ({ ok: false, error: { code: "AUTH", meta: { status } } }) });
-  assert.deepEqual(await run(), { kind: "signedOut" }, `live read ${status}`);
-  assert.equal(calls.signOut, 1);
-  droppedAll(owner, calls, `live read ${status}`);
+// ...and any refusal drops them: 401/403, another 4xx, an error nobody recognises.
+for (const [label, error] of [
+  ["401", { code: "AUTH", meta: { status: 401 } }],
+  ["403", { code: "AUTH", meta: { status: 403 } }],
+  ["404", { code: "NOT_FOUND", meta: { status: 404 } }],
+  ["unknown", { code: "WEIRD" }],
+]) {
+  const { owner, calls, run } = await setup({ read: async () => ({ ok: false, error }) });
+  assert.deepEqual(await run(), { kind: "signedOut" }, `live read ${label}`);
+  assert.equal(calls.signOut, 1, `live read ${label}`);
+  droppedAll(owner, calls, `live read ${label}`);
 }
-for (const code of ["RENEWAL_AUTHORITY_INACTIVE", "RENEWAL_LEASE_EXPIRED", "RENEWAL_LEASE_ORIGINAL_EXPIRED"]) {
-  const { owner, calls, run } = await setup({ restore: { renewal: { status: "restore-failed", error: withCode("refused", { code }) } } });
-  assert.deepEqual(await run(), { kind: "signedOut" }, code);
-  droppedAll(owner, calls, code);
+
+// The lease restore itself: 403 drops, 503 keeps (the pair), and so does every other non-transient failure.
+{
+  const { owner, calls, run } = await setup({ restore: { renewal: { status: "restore-failed", error: Object.assign(new Error("forbidden"), { status: 403 }) } } });
+  assert.deepEqual(await run(), { kind: "signedOut" });
+  droppedAll(owner, calls, "lease restore 403");
 }
 {
-  // A refusal that arrives as a thrown error with the status on a wrapped cause.
-  const { owner, calls, run } = await setup({ restoreThrows: undefined, restore: { renewalThrows: new Error("wrapped", { cause: { status: 403 } }) } });
-  assert.deepEqual(await run(), { kind: "signedOut" });
-  droppedAll(owner, calls, "wrapped 403");
+  const { owner, calls, run } = await setup({ restore: { renewal: { status: "restore-failed", error: Object.assign(new Error("unavailable"), { status: 503 }) } } });
+  assert.equal((await run()).kind, "unavailable");
+  keptAll(owner, calls, "lease restore 503");
+}
+for (const [label, restore] of [
+  ["404", { renewal: { status: "restore-failed", error: Object.assign(new Error("gone"), { status: 404 }) } }],
+  ["unknown error", { renewal: { status: "restore-failed", error: new Error("something unexpected") } }],
+  ["unknown thrown value", { renewalThrows: "boom" }],
+  ["no error at all", { renewal: { status: "restore-failed" } }],
+  ["wrapped 403", { renewalThrows: new Error("wrapped", { cause: { status: 403 } }) }],
+]) {
+  const { owner, calls, run } = await setup({ restore });
+  assert.deepEqual(await run(), { kind: "signedOut" }, label);
+  droppedAll(owner, calls, `lease restore ${label}`);
 }
 
-// Expired, corrupt, stale or missing: the saved session answered for itself.
-for (const status of ["expired", "corrupt", "stale", "missing"]) {
+// A renewal refusal code is an answer even when the error also looks transient.
+for (const code of ["RENEWAL_AUTHORITY_INACTIVE", "RENEWAL_LEASE_EXPIRED", "RENEWAL_LEASE_ORIGINAL_EXPIRED"]) {
+  for (const extra of [{}, { status: 503 }]) {
+    const { owner, calls, run } = await setup({ restore: { renewal: { status: "restore-failed", error: Object.assign(new Error("refused"), { code, ...extra }) } } });
+    assert.deepEqual(await run(), { kind: "signedOut" }, code);
+    droppedAll(owner, calls, code);
+  }
+}
+
+// Every status but `restore-failed` is a verdict, storage unavailable and disabled included.
+for (const status of ["expired", "corrupt", "stale", "missing", "storage-unavailable", "disabled"]) {
   const { owner, calls, run } = await setup({ restore: { renewal: { status } } });
   assert.deepEqual(await run(), { kind: "signedOut" }, status);
   droppedAll(owner, calls, status);
@@ -143,12 +181,21 @@ for (const status of ["expired", "corrupt", "stale", "missing"]) {
   assert.equal(loadRenewalReceipt(PAIN_MANIFEST, owner.address), null);
 }
 
-// A plain (not lease) restore that fails with something unrecognised keeps the saved session too.
+// A plain (not lease) restore that fails with something unrecognised ends the session too.
 {
   const { owner, calls, run } = await setup({ status: "loaded", restore: { plain: { status: "restore-failed", error: new Error("???") } } });
-  assert.equal((await run()).kind, "unavailable");
-  keptAll(owner, calls, "plain unknown");
+  assert.deepEqual(await run(), { kind: "signedOut" });
+  droppedAll(owner, calls, "plain unknown");
 }
+
+// What counts as transient.
+assert.equal(isTransientRestoreError(new TypeError("Failed to fetch")), true);
+assert.equal(isTransientRestoreError({ status: 429 }), true);
+assert.equal(isTransientRestoreError(new Error("outer", { cause: { name: "AbortError" } })), true);
+assert.equal(isTransientRestoreError({ status: 403 }), false);
+assert.equal(isTransientRestoreError({ status: 404 }), false);
+assert.equal(isTransientRestoreError(new Error("Persisted session is corrupt")), false);
+assert.equal(isTransientRestoreError(undefined), false);
 
 console.log("renewal keep tests passed");
 process.exit(0);

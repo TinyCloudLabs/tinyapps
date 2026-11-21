@@ -70,6 +70,13 @@ function admit(address, record, renewal, load = async () => record, arrivedAt = 
   assert.equal(loadRenewalReceipt(PAIN_MANIFEST, owner.address), null);
 }
 
+// A lease of the 7 days asked for, or shorter, is accepted.
+for (const given of [{}, { leaseSeconds: 3 * 86_400 }]) {
+  reset();
+  const { receipt, record, lease } = await fixture(given);
+  assert.equal(await verifiedRenewalLease(receipt, record), lease.authorization, JSON.stringify(given));
+}
+
 // A lease that does not check out against the session just signed in is refused: not sent, not stored.
 {
   reset();
@@ -83,6 +90,9 @@ function admit(address, record, renewal, load = async () => record, arrivedAt = 
     assert.equal(loadRenewalReceipt(PAIN_MANIFEST, made.owner.address), null, `${label}: nothing stored`);
   };
   await refused("lease signed by another wallet", () => fixture({ leaseSigner: privateKeyToAccount(generatePrivateKey()) }));
+  // A lease longer than the 7 days asked for, by a day or by a minute past the clock slack.
+  await refused("lease of 8 days", () => fixture({ leaseSeconds: 8 * 86_400 }));
+  await refused("lease stating 7 days but ending 2 minutes past them", () => fixture({ endExtraSeconds: 120 }));
   await refused("lease with an extra ability", () => fixture({ extraAbility: true }));
   await refused("lease naming another audience than the receipt's renewer", () => fixture({ leaseAudience: OTHER_RENEWER }));
   await refused("receipt from a different session", async () => {

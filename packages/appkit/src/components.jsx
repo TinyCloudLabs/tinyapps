@@ -1,5 +1,7 @@
-import React from "react";
-import { KeyRound, Loader2 } from "lucide-react";
+import React, { useState } from "react";
+import { KeyRound, Loader2, LogOut } from "lucide-react";
+
+import { KEEP_SIGNED_IN_LABEL, keepSignedInWarning } from "./renewal.js";
 
 export function StatusBar() {
   const time = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).toLowerCase();
@@ -11,7 +13,22 @@ export function StatusBar() {
   );
 }
 
-export function SignInScreen({ appName, appId, children, onSignIn, signingIn, error, notice }) {
+/** The opt-in to a renewing sign-in, shown before connecting: unticked it asks OpenKey for nothing extra. */
+export function KeepSignedInChoice({ appName, records, checked, onChange, disabled }) {
+  return (
+    <div className="keep-signed-in">
+      <label>
+        <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} disabled={disabled} />
+        {KEEP_SIGNED_IN_LABEL}
+      </label>
+      {checked && <p>{keepSignedInWarning(appName, records)}</p>}
+    </div>
+  );
+}
+
+/** `records` names what the app reads in the warning ("health", "food"). */
+export function SignInScreen({ appName, appId, children, onSignIn, signingIn, error, notice, records }) {
+  const [keepSignedIn, setKeepSignedIn] = useState(false);
   return (
     <main className="signin-screen">
       <div className="signin-copy">
@@ -22,11 +39,22 @@ export function SignInScreen({ appName, appId, children, onSignIn, signingIn, er
       </div>
       {notice && <div className="date-line">{notice}</div>}
       {error && <div className="error">{error}</div>}
-      <button className="primary-btn" onClick={onSignIn} disabled={signingIn}>
+      <KeepSignedInChoice appName={appName} records={records} checked={keepSignedIn} onChange={setKeepSignedIn} disabled={signingIn} />
+      <button className="primary-btn" onClick={() => onSignIn({ keepSignedIn })} disabled={signingIn}>
         {signingIn ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />}
         {signingIn ? "Signing in" : "Sign in with OpenKey"}
       </button>
     </main>
+  );
+}
+
+// Draft copy, the copy owner words it.
+export function SignOutButton({ onSignOut, signingOut }) {
+  return (
+    <button className="ghost-btn" type="button" onClick={onSignOut} disabled={signingOut}>
+      {signingOut ? <Loader2 size={14} className="spin" /> : <LogOut size={14} />}
+      {signingOut ? "Signing out" : "Sign out"}
+    </button>
   );
 }
 

@@ -3,7 +3,7 @@ import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sd
 
 import { refuseNarrowedApproval } from "./approval.js";
 import { normalizeStoredRecord } from "./analysis.js";
-import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, manifestForOwner, registryPathFor, renewsAtSignIn } from "./manifests.js";
+import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, manifestForOwner, registryPathFor } from "./manifests.js";
 import {
   SESSION_EXPIRATION_MS,
   SIGN_IN_RENEWAL_ASK,
@@ -29,15 +29,15 @@ export function tinycloudSettings(options = {}) {
 }
 
 /**
- * Sign in through OpenKey. A renewing app (renewsAtSignIn) also asks OpenKey for a renewal lease and keeps the
- * session saved so a reload restores it; `options.renews: false` turns that off, nothing turns it on for
- * another app. The result's `renewsUntil` is the end of the lease the node admitted, or null: without a lease
- * (unticked at OpenKey, an OpenKey without renewal, a lease that fails its checks or the node's refusal) the
- * sign-in is finite and nothing is kept for renewal.
+ * Sign in through OpenKey. With `options.keepSignedIn: true` (the person ticked the choice before connecting) it
+ * also asks OpenKey for a renewal lease and keeps the session saved so a reload restores it; without it the
+ * sign-in is finite, nothing is asked and nothing is saved. The result's `renewsUntil` is the end of the lease
+ * the node admitted, or null: without a lease (unticked at OpenKey, an OpenKey without renewal, a lease that
+ * fails its checks or the node's refusal) the sign-in is finite and nothing is kept for renewal.
  */
 export async function connectOpenKeyTinyCloud(manifest, options = {}) {
   const { host, openKeyHost, domain } = tinycloudSettings(options);
-  const renews = renewsAtSignIn(manifest) && options.renews !== false;
+  const renews = options.keepSignedIn === true;
 
   const openkey = refuseNarrowedApproval(
     options.openkey ?? new OpenKey({ host: openKeyHost, appName: manifest.name }),
@@ -107,6 +107,38 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     openKeyKeyId: authResult.keyId,
     renewsUntil,
   };
+}
+
+// Draft copy, the copy owner words it.
+export const SECRETS_ACCOUNT_MESSAGE =
+  "Your saved Anthropic API key can only be unlocked with the OpenKey account you signed in with. Sign out and sign in again with that account.";
+// Draft copy, the copy owner words it.
+export const SECRETS_UNLOCK_MESSAGE = "Couldn't unlock your saved Anthropic API key. Approve the OpenKey prompt and try again.";
+
+/**
+ * A restored session has no OpenKey client, so no secrets signer. Unlocking secrets needs a byte-exact signature
+ * from OpenKey: this gives the restored client a signer that asks for one only when secrets are first used,
+ * connecting a fresh OpenKey client (the person approves in its window, as at sign-in) and checking it is the
+ * saved account. A refusal or a different account fails with a plain message; nothing resolves to an empty key.
+ */
+export function attachRestoredSecretsSigner(tcw, address, createOpenKey) {
+  let connected = null;
+  secretsSigners.set(tcw, {
+    signMessage: async (message) => {
+      try {
+        connected ??= (async () => {
+          const openkey = createOpenKey();
+          return { openkey, authResult: await openkey.connect() };
+        })();
+        const { openkey, authResult } = await connected;
+        if (String(authResult.address).toLowerCase() !== String(address).toLowerCase()) throw new Error(SECRETS_ACCOUNT_MESSAGE);
+        return (await openkey.signMessage({ message, keyId: authResult.keyId })).signature;
+      } catch (error) {
+        connected = null;
+        throw error instanceof Error && error.message === SECRETS_ACCOUNT_MESSAGE ? error : new Error(SECRETS_UNLOCK_MESSAGE);
+      }
+    },
+  });
 }
 
 export async function publishManifest(tcw, manifest) {

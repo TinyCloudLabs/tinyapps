@@ -118,16 +118,6 @@ export const MANIFESTS = {
   insight: INSIGHT_MANIFEST,
 };
 
-// Which apps keep the owner signed in across reloads and ask OpenKey for a renewal lease at sign-in.
-// Food Tracker is finite on purpose: its sign-in grant carries the secrets decrypt permission, and a
-// decrypt grant renews only by the owner's explicit opt-in (policy D7), which this sign-in never asks for.
-// Kept here, not on the manifests, because the manifests are published to the owner's space as they are.
-const RENEWING_APPS = new Set([APP_IDS.pain, APP_IDS.insight]);
-
-export function renewsAtSignIn(manifest) {
-  return RENEWING_APPS.has(manifest.app_id);
-}
-
 export function resolveManifestPath(manifest, path, skipPrefix = false) {
   if (skipPrefix || manifest.prefix === "") return path;
   const prefix = manifest.prefix || manifest.app_id;

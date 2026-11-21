@@ -10,6 +10,7 @@ import {
   Pill,
   RenewalNote,
   RestoringScreen,
+  SignOutButton,
   SignInScreen,
   deleteRecord,
   fmtDay,
@@ -28,7 +29,7 @@ const QUALITIES = ["sharp", "dull", "cramping", "burning", "pressure", "throbbin
 const LOCATIONS = ["head", "chest", "abdomen-upper", "abdomen-lower", "back-upper", "back-mid", "back-lower", "left-leg", "right-leg"];
 
 function PainApp() {
-  const auth = useTinyCloudApp(PAIN_MANIFEST);
+  const auth = useTinyCloudApp(PAIN_MANIFEST, { appName: "Pain Tracker" });
   const [events, setEvents] = useState([]);
   const [view, setView] = useState("home");
   const [error, setError] = useState("");
@@ -80,6 +81,7 @@ function PainApp() {
           <div className="date-line">{todayLabel()}</div>
           <RenewalNote renewsUntil={auth.renewsUntil} />
         </div>
+        <SignOutButton onSignOut={auth.signOut} signingOut={auth.signingOut} />
       </header>
       {error && <div className="error" style={{ margin: "0 22px 12px" }}>{error}</div>}
       {view === "home" && <PainHome events={events} setView={setView} />}

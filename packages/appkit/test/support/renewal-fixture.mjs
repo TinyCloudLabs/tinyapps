@@ -125,10 +125,12 @@ export const iso = (ms) => new Date(ms).toISOString();
 const now = Date.now();
 export const originalEnd = now + 7 * DAY;
 const approvedAt = iso(Math.floor(now / 1000) * 1000);
-const leaseEnd = iso(Date.parse(approvedAt) + 90 * DAY);
 
 /** The renewal receipt OpenKey returns for the grant `originalCid`. */
 export async function leaseReceipt(originalCid, owner, options = {}) {
+  const leaseSeconds = options.leaseSeconds ?? 7 * 86_400;
+  // `endExtraSeconds` puts the lease end past the lifetime the receipt states (clock slack, or a forgery).
+  const leaseEnd = iso(Date.parse(approvedAt) + (leaseSeconds + (options.endExtraSeconds ?? 0)) * 1000);
   const target = `urn:cid:${originalCid}`;
   const lease = await cacao(options.leaseSigner ?? owner, {
     aud: options.leaseAudience ?? RENEWER,
@@ -144,7 +146,7 @@ export async function leaseReceipt(originalCid, owner, options = {}) {
   const renewer = options.receiptRenewer ?? RENEWER;
   const receipt = {
     version: 1,
-    approvedLeaseLifetimeSeconds: 90 * 86_400,
+    approvedLeaseLifetimeSeconds: leaseSeconds,
     approvedAt: options.approvedAt ?? approvedAt,
     receipt: {
       originalCid,

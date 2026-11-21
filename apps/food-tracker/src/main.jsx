@@ -8,7 +8,10 @@ import {
   EmptyState,
   FOOD_MANIFEST,
   Pill,
+  RenewalNote,
+  RestoringScreen,
   SignInScreen,
+  SignOutButton,
   deleteRecord,
   fileToDataUrl,
   fmtDay,
@@ -29,7 +32,7 @@ import "@tinyapps/appkit/styles.css";
 const MEALS_PREFIX = recordsPrefix(APP_IDS.food, "meal");
 
 function FoodApp() {
-  const auth = useTinyCloudApp(FOOD_MANIFEST);
+  const auth = useTinyCloudApp(FOOD_MANIFEST, { appName: "Food Tracker" });
   const [meals, setMeals] = useState([]);
   const [view, setView] = useState("home");
   const [loading, setLoading] = useState(false);
@@ -52,6 +55,14 @@ function FoodApp() {
     refresh();
   }, [auth.tcw, auth.session]);
 
+  if (!auth.ready) {
+    return (
+      <AppShell app="food">
+        <RestoringScreen />
+      </AppShell>
+    );
+  }
+
   if (!auth.session) {
     return (
       <AppShell app="food">
@@ -61,6 +72,8 @@ function FoodApp() {
           onSignIn={auth.signIn}
           signingIn={auth.signingIn}
           error={auth.error}
+          notice={auth.signOutNotice}
+          records="food"
         >
           What did you <em>eat</em>, and when.
         </SignInScreen>
@@ -74,8 +87,12 @@ function FoodApp() {
         <div>
           <h1>Food <em>Tracker</em></h1>
           <div className="date-line">{todayLabel()}</div>
+          <RenewalNote renewsUntil={auth.renewsUntil} />
         </div>
-        <button className="icon-btn" onClick={() => setView("settings")} aria-label="Settings"><Settings size={17} /></button>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="icon-btn" onClick={() => setView("settings")} aria-label="Settings"><Settings size={17} /></button>
+          <SignOutButton onSignOut={auth.signOut} signingOut={auth.signingOut} />
+        </div>
       </header>
 
       {error && <div className="error" style={{ margin: "0 22px 12px" }}>{error}</div>}

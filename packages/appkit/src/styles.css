@@ -344,3 +344,7 @@ textarea { resize: vertical; line-height: 1.45; }
     right: 18px;
   }
 }
+
+.keep-signed-in { color: var(--ink-soft); font-size: 14px; }
+.keep-signed-in label { display: flex; align-items: center; gap: 8px; }
+.keep-signed-in p { margin: 8px 0 0; color: var(--ink-mute); font-size: 12px; line-height: 1.45; }

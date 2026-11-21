@@ -9,10 +9,11 @@ import {
   keptLeaseEnd,
   renewalRestoreFor,
 } from "./renewal.js";
-import { applicationsKV, tinycloudSettings } from "./tinycloud.js";
+import { applicationsKV, attachRestoredSecretsSigner, tinycloudSettings } from "./tinycloud.js";
 
 // Restoring a saved sign-in on load, for the renewing apps. Restoring sends nothing to the owner's space (no
-// manifest publish) and never touches the secrets path: a restored session has no secrets signer.
+// manifest publish) and never touches the secrets path. A restored session has no secrets signer until secrets
+// are first used: then OpenKey is asked to confirm, see `attachRestoredSecretsSigner`.
 
 // Draft copy, the copy owner words it.
 export const RESTORE_UNAVAILABLE_MESSAGE = "Can't reach TinyCloud right now. You're still signed in; reload to try again.";
@@ -61,19 +62,31 @@ function refusalStatus(error) {
   return error?.meta?.status ?? error?.status;
 }
 
-/** Restore statuses the SDK reaches by reading the saved session itself: no network, so a retry changes nothing. */
-const AUTHORITATIVE_STATUSES = new Set(["expired", "corrupt", "stale", "missing"]);
+// What a failed fetch looks like per engine: Chromium, Firefox, Safari, undici (Node).
+const NETWORK_FAILURE = /failed to fetch|networkerror|load failed|network request failed|fetch failed|timed? ?out/i;
 
-/** The node's own codes for a lease it will not renew (sdk-core's renewal refusals). */
+/** The node's own codes for a lease it will not renew (sdk-core's renewal refusals): never transient. */
 const REFUSAL_CODES = new Set(["RENEWAL_AUTHORITY_INACTIVE", "RENEWAL_LEASE_EXPIRED", "RENEWAL_LEASE_ORIGINAL_EXPIRED"]);
 
-/** A node or registry refusal that says the lease or session is revoked or expired: 401/403 or a renewal refusal code. */
-function isAuthoritativeRefusal(error) {
-  for (let depth = 0; depth < 4 && error != null && typeof error === "object"; depth++) {
-    if (REFUSAL_CODES.has(error.code)) return true;
-    const status = refusalStatus(error);
-    if (status === 401 || status === 403) return true;
-    error = error.cause;
+/**
+ * Does this error mean "couldn't reach the server" rather than "the server (or the saved session) said no"?
+ * Network failures, aborts and timeouts, and 408/429/5xx responses (also "HTTP 5xx" in a message) qualify.
+ * Follows `cause` a few links, because SDK layers wrap the underlying fetch error. A renewal refusal code is
+ * an answer, whatever else the error carries.
+ */
+export function isTransientRestoreError(error) {
+  let current = error;
+  for (let depth = 0; depth < 4 && current != null; depth++) {
+    if (typeof current !== "object") return typeof current === "string" && NETWORK_FAILURE.test(current);
+    if (REFUSAL_CODES.has(current.code)) return false;
+    if (current.name === "AbortError" || current.name === "TimeoutError") return true;
+    const status = refusalStatus(current);
+    if (typeof status === "number" && (status >= 500 || status === 408 || status === 429)) return true;
+    if (typeof current.message === "string") {
+      if (NETWORK_FAILURE.test(current.message)) return true;
+      if (/\bHTTP (5\d\d|408|429)\b/.test(current.message)) return true;
+    }
+    current = current.cause;
   }
   return false;
 }
@@ -81,12 +94,10 @@ function isAuthoritativeRefusal(error) {
 /**
  * Restore the saved sign-in of a renewing app. Resolves
  * - `{ kind: "restored", tcw, session, address, renewsUntil }`;
- * - `{ kind: "signedOut" }`: nothing saved, or an authoritative answer ended the saved session (expired, corrupt,
- *   stale or missing, or the node refusing it as revoked or expired): the saved session and its renewal receipt
- *   are cleared;
- * - `{ kind: "unavailable", message }`: the restore failed without an authoritative answer (the node couldn't be
- *   reached, a timeout, a 5xx, unavailable storage or an error nobody recognises). Nothing is cleared; reload
- *   retries.
+ * - `{ kind: "signedOut" }`: nothing saved, or the saved session ended (a non-restored status, a refusal that is
+ *   not a transient failure, a lapsed lease): the saved session and its renewal receipt are cleared;
+ * - `{ kind: "unavailable", message }`: the restore failed only because something couldn't be reached (network,
+ *   timeout, 408/429/5xx, offline). Nothing is cleared; reload retries.
  * A saved session past its signed end is restored through its own verified renewal receipt, else not at all.
  */
 export async function restoreSavedSession(manifest, deps = {}) {
@@ -94,6 +105,7 @@ export async function restoreSavedSession(manifest, deps = {}) {
     storage = appSessionStorage(manifest),
     createClient = (address) => createRestoreClient(manifest, address),
     isOffline = browserIsOffline,
+    createOpenKey = () => new OpenKey(openKeySettings(manifest)),
   } = deps;
   const unavailable = () => ({
     kind: "unavailable",
@@ -129,7 +141,8 @@ export async function restoreSavedSession(manifest, deps = {}) {
       try {
         await liveRead(manifest, tcw);
       } catch (error) {
-        if (isAuthoritativeRefusal(error)) {
+        // Only a failure to reach the node keeps the session; any refusal (401/403 or otherwise) ends it.
+        if (!isOffline() && !isTransientRestoreError(error)) {
           await clearSaved(address);
           await Promise.resolve(tcw.signOut()).catch(() => undefined);
           return { kind: "signedOut" };
@@ -139,27 +152,33 @@ export async function restoreSavedSession(manifest, deps = {}) {
       }
     }
     const renewsUntil = renewal?.leaseExpiresAt ?? (await keptLeaseEnd(manifest, address, storage));
+    attachRestoredSecretsSigner(tcw, address, createOpenKey);
     return { kind: "restored", tcw, session: result.session, address, renewsUntil };
   }
 
   tcw.cleanup();
-  // Only an answer from the saved session itself or from the node ends it: a session the SDK found expired,
-  // corrupt, stale or missing, or a refusal that says the lease or session is revoked or expired. A failure to
-  // reach anything (network, timeout, 5xx, storage unavailable) and any error that is not recognisably one of
-  // those answers leave the saved session and its receipt in place; a reload retries.
-  if (AUTHORITATIVE_STATUSES.has(result.status) || isAuthoritativeRefusal(result.error)) {
-    await clearSaved(address);
-    return { kind: "signedOut" };
-  }
-  return unavailable();
+  // Every status but `restore-failed` is a verdict the SDK reached by reading the saved session itself (expired,
+  // corrupt, stale, missing, storage unavailable, disabled). `restore-failed` wraps what threw while rebuilding
+  // the session or asking the node: only a failure to reach something (network, timeout, 408/429/5xx, offline)
+  // keeps the saved session and its receipt for a reload to retry. Any other refusal, or an error nobody
+  // recognises, ends the session.
+  if (result.status === "restore-failed" && (isOffline() || isTransientRestoreError(result.error))) return unavailable();
+  await clearSaved(address);
+  return { kind: "signedOut" };
 }
 
 /** How long sign-out waits for OpenKey before it goes on with the local sign-out. */
 export const OPENKEY_SIGN_OUT_TIMEOUT_MS = 5_000;
 
 // Draft copy, the copy owner words it.
-export const SIGN_OUT_NOTICE =
-  "You're signed out here, but renewal may still be on. You can stop it under Renewing permissions in OpenKey settings.";
+export function signedOutNoticeFor(appName) {
+  return `Signed out of ${appName} in this browser. ${appName}'s access won't renew.`;
+}
+
+// Draft copy, the copy owner words it.
+export function renewalMayContinueNoticeFor(appName) {
+  return `You're signed out of ${appName} in this browser, but OpenKey may still be renewing its access. To stop that, choose Stop renewal under Renewing permissions in OpenKey settings.`;
+}
 
 /**
  * Ends the OpenKey session and its leases. The web SDK's `signOut` is local only and never calls OpenKey, so a
@@ -185,21 +204,28 @@ async function endOpenKeySession(client, timeoutMs) {
  * Sign out of the session of `address`: ends the OpenKey session and its leases first (it can open OpenKey's
  * window, which needs the click), then signs out locally and clears the saved session and its renewal receipt.
  * `openkey` is the client this tab signed in with; a tab restored through the saved session has none, so it
- * builds one with `createOpenKey`. It always asks, so a lost receipt cannot leave a lease behind. Resolves `{ notice }`: null when OpenKey confirmed, else a short notice that renewal may still be on. Never
- * throws: the local sign-out and the clearing always happen.
+ * builds one with `createOpenKey`. It always asks, so a lost receipt cannot leave a lease behind. Resolves
+ * `{ notice }`: when OpenKey confirmed, the notice that access won't renew; else the notice that OpenKey may still
+ * be renewing it. Both name `appName`.
+ * Never throws: the local sign-out and the clearing always happen.
  */
 export async function signOutOfTinyCloud(
   manifest,
   tcw,
   address,
-  { openkey = null, createOpenKey = () => new OpenKey(openKeySettings(manifest)), timeoutMs = OPENKEY_SIGN_OUT_TIMEOUT_MS } = {},
+  {
+    openkey = null,
+    createOpenKey = () => new OpenKey(openKeySettings(manifest)),
+    timeoutMs = OPENKEY_SIGN_OUT_TIMEOUT_MS,
+    appName = manifest.name,
+  } = {},
 ) {
-  let notice = null;
+  let notice = signedOutNoticeFor(appName);
   try {
     const ended = await endOpenKeySession(() => openkey ?? createOpenKey(), timeoutMs);
-    if (!ended) notice = SIGN_OUT_NOTICE;
+    if (!ended) notice = renewalMayContinueNoticeFor(appName);
   } catch {
-    notice = SIGN_OUT_NOTICE;
+    notice = renewalMayContinueNoticeFor(appName);
   }
   clearRenewalReceipt(manifest, address);
   try {

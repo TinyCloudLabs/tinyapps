@@ -9,6 +9,7 @@ import {
   INSIGHT_MANIFEST,
   RenewalNote,
   RestoringScreen,
+  SignOutButton,
   SignInScreen,
   analyzeCorrelations,
   fmtDay,
@@ -24,7 +25,7 @@ const MEALS_PREFIX = recordsPrefix(APP_IDS.food, "meal");
 const EVENTS_PREFIX = recordsPrefix(APP_IDS.pain, "pain");
 
 function InsightApp() {
-  const auth = useTinyCloudApp(INSIGHT_MANIFEST);
+  const auth = useTinyCloudApp(INSIGHT_MANIFEST, { appName: "Insight" });
   const [manifests, setManifests] = useState([]);
   const [meals, setMeals] = useState([]);
   const [events, setEvents] = useState([]);
@@ -91,7 +92,10 @@ function InsightApp() {
           <div className="date-line">{meals.length} meals · {events.length} events</div>
           <RenewalNote renewsUntil={auth.renewsUntil} />
         </div>
-        <button className="icon-btn" onClick={refresh} aria-label="Refresh"><RefreshCw size={17} className={loading ? "spin" : ""} /></button>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="icon-btn" onClick={refresh} aria-label="Refresh"><RefreshCw size={17} className={loading ? "spin" : ""} /></button>
+          <SignOutButton onSignOut={auth.signOut} signingOut={auth.signingOut} />
+        </div>
       </header>
       {error && <div className="error" style={{ margin: "0 22px 12px" }}>{error}</div>}
       <main className="scroll-body">

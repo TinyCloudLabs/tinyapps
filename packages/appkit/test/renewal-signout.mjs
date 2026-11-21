@@ -5,7 +5,7 @@ import "./support/browser.mjs";
 import { fixture } from "./support/renewal-fixture.mjs";
 
 const { loadRenewalReceipt, saveRenewalReceipt } = await import("../src/renewal.js");
-const { SIGN_OUT_NOTICE, signOutOfTinyCloud } = await import("../src/restore.js");
+const { renewalMayContinueNoticeFor, signOutOfTinyCloud, signedOutNoticeFor } = await import("../src/restore.js");
 const { PAIN_MANIFEST } = await import("../src/manifests.js");
 
 // Sign-out ends the OpenKey session and its leases: the SDK's own signOut is local only. The OpenKey client and
@@ -43,7 +43,7 @@ const revoked = async () => ({ revoked: true });
       return openkeyClient("fresh", revoked);
     },
   });
-  assert.deepEqual(result, { notice: null });
+  assert.deepEqual(result, { notice: signedOutNoticeFor("Pain Tracker") });
   assert.deepEqual(order, ["own.signOut", "tcw.signOut"]);
   assert.equal(created, 0);
   assert.equal(loadRenewalReceipt(PAIN_MANIFEST, owner.address), null);
@@ -53,7 +53,7 @@ const revoked = async () => ({ revoked: true });
 {
   const { owner, order, tcw, openkeyClient } = await setup({ withReceipt: false });
   const result = await signOutOfTinyCloud(PAIN_MANIFEST, tcw, owner.address, { openkey: openkeyClient("own", revoked) });
-  assert.deepEqual(result, { notice: null });
+  assert.deepEqual(result, { notice: signedOutNoticeFor("Pain Tracker") });
   assert.deepEqual(order, ["own.signOut", "tcw.signOut"]);
 }
 
@@ -67,14 +67,14 @@ const revoked = async () => ({ revoked: true });
       return openkeyClient("fresh", revoked);
     },
   });
-  assert.deepEqual(result, { notice: null });
+  assert.deepEqual(result, { notice: signedOutNoticeFor("Pain Tracker") });
   assert.equal(created, 1);
   assert.deepEqual(order, ["fresh.signOut", "tcw.signOut"]);
   assert.equal(loadRenewalReceipt(PAIN_MANIFEST, owner.address), null);
 }
 
 // A restored tab with no receipt (lost or never kept) still asks OpenKey on a fresh client, so no lease is left
-// behind; a confirmed end gives no notice.
+// behind; a confirmed end gives the confirmed notice.
 {
   const { owner, order, tcw, openkeyClient } = await setup({ withReceipt: false });
   let created = 0;
@@ -84,7 +84,7 @@ const revoked = async () => ({ revoked: true });
       return openkeyClient("fresh", revoked);
     },
   });
-  assert.deepEqual(result, { notice: null });
+  assert.deepEqual(result, { notice: signedOutNoticeFor("Pain Tracker") });
   assert.equal(created, 1);
   assert.deepEqual(order, ["fresh.signOut", "tcw.signOut"]);
 }
@@ -95,7 +95,7 @@ const revoked = async () => ({ revoked: true });
   const result = await signOutOfTinyCloud(PAIN_MANIFEST, tcw, owner.address, {
     createOpenKey: () => openkeyClient("fresh", async () => ({ revoked: false })),
   });
-  assert.deepEqual(result, { notice: SIGN_OUT_NOTICE });
+  assert.deepEqual(result, { notice: renewalMayContinueNoticeFor("Pain Tracker") });
   assert.deepEqual(order, ["fresh.signOut", "tcw.signOut"]);
 }
 
@@ -116,7 +116,7 @@ for (const [label, behaviour] of [
       ...(restored ? { createOpenKey: () => client } : { openkey: client }),
       timeoutMs: 50,
     });
-    assert.deepEqual(result, { notice: SIGN_OUT_NOTICE }, `${label} (restored ${restored})`);
+    assert.deepEqual(result, { notice: renewalMayContinueNoticeFor("Pain Tracker") }, `${label} (restored ${restored})`);
     assert.ok(Date.now() - started < 2_000, `${label}: capped`);
     assert.deepEqual(order, ["ok.signOut", "tcw.signOut"], label);
     assert.equal(loadRenewalReceipt(PAIN_MANIFEST, owner.address), null, `${label}: receipt cleared`);
@@ -137,12 +137,16 @@ for (const [label, behaviour] of [
       },
     },
   );
-  assert.deepEqual(result, { notice: SIGN_OUT_NOTICE });
+  assert.deepEqual(result, { notice: renewalMayContinueNoticeFor("Pain Tracker") });
   assert.equal(loadRenewalReceipt(PAIN_MANIFEST, owner.address), null);
 }
 
-// The notice says where to stop renewal.
-assert.match(SIGN_OUT_NOTICE, /Renewing permissions in OpenKey settings/);
+// The two notice texts, naming the app they are for.
+assert.equal(signedOutNoticeFor("Food Tracker"), "Signed out of Food Tracker in this browser. Food Tracker's access won't renew.");
+assert.equal(
+  renewalMayContinueNoticeFor("Insight"),
+  "You're signed out of Insight in this browser, but OpenKey may still be renewing its access. To stop that, choose Stop renewal under Renewing permissions in OpenKey settings.",
+);
 
 console.log("renewal sign-out tests passed");
 process.exit(0);
