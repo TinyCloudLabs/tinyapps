@@ -114,7 +114,7 @@ const options = { host: "https://node.example.test", openKeyHost: "https://openk
     (error) => {
       assert.equal(
         error.message,
-        "Food Tracker needs access to your saved Anthropic API key to work. Sign in again and keep all permissions.",
+        "Food Tracker needs all the permissions it asks for. Sign in again and allow each one.",
       );
       return true;
     },

@@ -272,7 +272,7 @@ for (const [label, lease] of [
 {
   reset();
   const openkey = fakeOpenKey({ lease: "valid", narrow: true });
-  await assert.rejects(connectOpenKeyTinyCloud(PAIN_MANIFEST, { ...options, openkey }), /Pain Tracker needs access to .* to work\. Sign in again and keep all permissions\./);
+  await assert.rejects(connectOpenKeyTinyCloud(PAIN_MANIFEST, { ...options, openkey }), { message: "Pain Tracker needs all the permissions it asks for. Sign in again and allow each one." });
   assert.equal(openkey.calls.authorize.length, 1);
   assert.equal(nodeKeyCalls().length, 0);
   assert.equal(leaseCalls().length, 0);

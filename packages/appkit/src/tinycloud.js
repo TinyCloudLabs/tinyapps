@@ -5,14 +5,14 @@ import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sd
 import { refuseNarrowedApproval } from "./approval.js";
 import { normalizeStoredRecord } from "./analysis.js";
 import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, manifestForOwner, registryPathFor } from "./manifests.js";
-import { admitSignInRenewal, appSessionStorage, openKeyRenewalClient, renewalAskFor, sessionExpirationMsFor } from "./renewal.js";
+import { admitSignInRenewal, appSessionStorage, clearRenewalReceipt, openKeyRenewalClient, renewalAskFor, sessionExpirationMsFor } from "./renewal.js";
 
 const DEFAULT_HOST = "https://node.tinycloud.xyz";
 const DEFAULT_OPENKEY_HOST = "https://openkey.so";
 const secretsSigners = new WeakMap();
 // Draft copy, the copy owner words it.
 export const REENTER_API_KEY_MESSAGE =
-  "Your saved Anthropic API key can't be read after the TinyCloud update. Please enter your Anthropic API key again in Settings.";
+  "Your saved Anthropic API key can't be read. Enter it again in Settings.";
 
 /** Where the apps reach TinyCloud and the OpenKey sign-in, and the SIWE domain they sign in under. */
 export function tinycloudSettings(options = {}) {
@@ -77,20 +77,29 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     },
   });
   const session = await tcw.signIn();
-  // OpenKey records the lease but does not send it to the node: the session's node admits it here, else this
-  // sign-in runs to its signed end.
-  const renewsUntil = await admitSignInRenewal({
-    tcw,
-    manifest,
-    address: authResult.address,
-    renewal: renewalOutcome.renewal,
-    arrivedAt: renewalArrivedAt,
-  });
-  // Secrets unlock derives its key from a byte-exact signature, a separate use from sign-in.
-  secretsSigners.set(tcw, {
-    signMessage: async (message) => (await openkey.signMessage({ message, keyId: authResult.keyId })).signature,
-  });
-  await publishManifest(tcw, manifest);
+  // The sign-in has saved a session and the lease below saves a receipt: when a later step throws, the sign-in
+  // fails and what it saved must not stay (a reload would sign the person in from it).
+  let renewsUntil;
+  try {
+    // OpenKey records the lease but does not send it to the node: the session's node admits it here, else this
+    // sign-in runs to its signed end.
+    renewsUntil = await admitSignInRenewal({
+      tcw,
+      manifest,
+      address: authResult.address,
+      renewal: renewalOutcome.renewal,
+      arrivedAt: renewalArrivedAt,
+    });
+    // Secrets unlock derives its key from a byte-exact signature, a separate use from sign-in.
+    secretsSigners.set(tcw, {
+      signMessage: async (message) => (await openkey.signMessage({ message, keyId: authResult.keyId })).signature,
+    });
+    await publishManifest(tcw, manifest);
+  } catch (error) {
+    await undoSignIn(manifest, tcw, authResult.address);
+    throw error;
+  }
+
   return {
     tcw,
     session,
@@ -103,7 +112,7 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
 
 // Draft copy, the copy owner words it.
 export const SECRETS_ACCOUNT_MESSAGE =
-  "Your saved Anthropic API key can only be unlocked with the OpenKey account you signed in with. Sign out and sign in again with that account.";
+  "Your saved Anthropic API key can only be unlocked by the OpenKey account that saved it. Sign out, then sign in with that account.";
 // Draft copy, the copy owner words it.
 export const SECRETS_UNLOCK_MESSAGE = "Couldn't unlock your saved Anthropic API key. Approve the OpenKey prompt and try again.";
 
@@ -131,6 +140,23 @@ export function attachRestoredSecretsSigner(tcw, address, createOpenKey) {
       }
     },
   });
+}
+
+/** Undoes what a sign-in that then failed saved: signs the client out and clears the saved session and receipt. */
+async function undoSignIn(manifest, tcw, address) {
+  try {
+    clearRenewalReceipt(manifest, address);
+  } catch {
+    // The saved session is cleared below all the same.
+  }
+  try {
+    await tcw.signOut();
+  } catch {
+    // The saved session is cleared below whatever the client says.
+  }
+  await appSessionStorage(manifest)
+    .clear(address)
+    .catch(() => undefined);
 }
 
 export async function publishManifest(tcw, manifest) {

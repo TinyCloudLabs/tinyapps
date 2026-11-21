@@ -24,7 +24,7 @@ export function SignInScreen({ appName, appId, children, onSignIn, signingIn, er
       {error && <div className="error">{error}</div>}
       <button className="primary-btn" onClick={onSignIn} disabled={signingIn}>
         {signingIn ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />}
-        {signingIn ? "Signing in" : "Sign in with OpenKey"}
+        {signingIn ? "Signing in…" : "Sign in with OpenKey"}
       </button>
     </main>
   );
@@ -35,7 +35,7 @@ export function SignOutButton({ onSignOut, signingOut }) {
   return (
     <button className="ghost-btn" type="button" onClick={onSignOut} disabled={signingOut}>
       {signingOut ? <Loader2 size={14} className="spin" /> : <LogOut size={14} />}
-      {signingOut ? "Signing out" : "Sign out"}
+      {signingOut ? "Signing out…" : "Sign out"}
     </button>
   );
 }
@@ -57,7 +57,7 @@ export function SessionEndedPrompt({ auth, children = SESSION_ENDED_MESSAGE }) {
       {auth.expired && (
         <button className="primary-btn" type="button" onClick={auth.resume} disabled={auth.signingIn}>
           {auth.signingIn ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />}
-          {auth.signingIn ? "Signing in" : "Sign in again"}
+          {auth.signingIn ? "Signing in…" : "Sign in again"}
         </button>
       )}
     </div>
@@ -71,7 +71,7 @@ export function RestoringScreen() {
       <div className="signin-copy">
         <div className="eyebrow">Tinyapps</div>
         <p>
-          <Loader2 size={16} className="spin" /> Restoring your sign-in
+          <Loader2 size={16} className="spin" /> Restoring your sign-in…
         </p>
       </div>
     </main>
