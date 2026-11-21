@@ -8,6 +8,8 @@ import {
   EmptyState,
   PAIN_MANIFEST,
   Pill,
+  RenewalNote,
+  RestoringScreen,
   SignInScreen,
   deleteRecord,
   fmtDay,
@@ -45,6 +47,14 @@ function PainApp() {
     refresh();
   }, [auth.tcw, auth.session]);
 
+  if (!auth.ready) {
+    return (
+      <AppShell app="pain">
+        <RestoringScreen />
+      </AppShell>
+    );
+  }
+
   if (!auth.session) {
     return (
       <AppShell app="pain">
@@ -54,6 +64,7 @@ function PainApp() {
           onSignIn={auth.signIn}
           signingIn={auth.signingIn}
           error={auth.error}
+          notice={auth.signOutNotice}
         >
           Where it <em>hurts</em>, when, how much.
         </SignInScreen>
@@ -67,6 +78,7 @@ function PainApp() {
         <div>
           <h1>Pain <em>Tracker</em></h1>
           <div className="date-line">{todayLabel()}</div>
+          <RenewalNote renewsUntil={auth.renewsUntil} />
         </div>
       </header>
       {error && <div className="error" style={{ margin: "0 22px 12px" }}>{error}</div>}

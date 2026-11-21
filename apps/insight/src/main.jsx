@@ -7,6 +7,8 @@ import {
   AppShell,
   EmptyState,
   INSIGHT_MANIFEST,
+  RenewalNote,
+  RestoringScreen,
   SignInScreen,
   analyzeCorrelations,
   fmtDay,
@@ -53,6 +55,14 @@ function InsightApp() {
     refresh();
   }, [auth.tcw, auth.session]);
 
+  if (!auth.ready) {
+    return (
+      <AppShell app="insight">
+        <RestoringScreen />
+      </AppShell>
+    );
+  }
+
   if (!auth.session) {
     return (
       <AppShell app="insight">
@@ -62,6 +72,7 @@ function InsightApp() {
           onSignIn={auth.signIn}
           signingIn={auth.signingIn}
           error={auth.error}
+          notice={auth.signOutNotice}
         >
           Food <em>×</em> Pain.
         </SignInScreen>
@@ -78,6 +89,7 @@ function InsightApp() {
           <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}><Sparkles size={13} /> Agent-style reader</div>
           <h1>Food <em>×</em> Pain</h1>
           <div className="date-line">{meals.length} meals · {events.length} events</div>
+          <RenewalNote renewsUntil={auth.renewsUntil} />
         </div>
         <button className="icon-btn" onClick={refresh} aria-label="Refresh"><RefreshCw size={17} className={loading ? "spin" : ""} /></button>
       </header>

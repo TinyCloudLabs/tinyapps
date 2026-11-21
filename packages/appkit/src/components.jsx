@@ -11,7 +11,7 @@ export function StatusBar() {
   );
 }
 
-export function SignInScreen({ appName, appId, children, onSignIn, signingIn, error }) {
+export function SignInScreen({ appName, appId, children, onSignIn, signingIn, error, notice }) {
   return (
     <main className="signin-screen">
       <div className="signin-copy">
@@ -20,6 +20,7 @@ export function SignInScreen({ appName, appId, children, onSignIn, signingIn, er
         <p>Data is written to your TinyCloud applications space under this app's manifest.</p>
         <code>{appId}</code>
       </div>
+      {notice && <div className="date-line">{notice}</div>}
       {error && <div className="error">{error}</div>}
       <button className="primary-btn" onClick={onSignIn} disabled={signingIn}>
         {signingIn ? <Loader2 size={16} className="spin" /> : <KeyRound size={16} />}
@@ -27,6 +28,29 @@ export function SignInScreen({ appName, appId, children, onSignIn, signingIn, er
       </button>
     </main>
   );
+}
+
+// Draft copy, the copy owner words it.
+export function RestoringScreen() {
+  return (
+    <main className="signin-screen">
+      <div className="signin-copy">
+        <div className="eyebrow">Tinyapps</div>
+        <p>
+          <Loader2 size={16} className="spin" /> Restoring your sign-in
+        </p>
+      </div>
+    </main>
+  );
+}
+
+/** One line for the signed-in view: shown only while a verified renewal lease is kept (`renewsUntil`, an ISO time). */
+export function RenewalNote({ renewsUntil }) {
+  if (!renewsUntil) return null;
+  const until = new Date(renewsUntil);
+  if (Number.isNaN(until.getTime())) return null;
+  // Draft copy, the copy owner words it.
+  return <div className="date-line">Renews until {until.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })}</div>;
 }
 
 export function AppShell({ app, children }) {

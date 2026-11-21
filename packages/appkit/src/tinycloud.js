@@ -3,7 +3,14 @@ import { AutoApproveSpaceCreationHandler, TinyCloudWeb } from "@tinycloud/web-sd
 
 import { refuseNarrowedApproval } from "./approval.js";
 import { normalizeStoredRecord } from "./analysis.js";
-import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, manifestForOwner, registryPathFor } from "./manifests.js";
+import { ANTHROPIC_SECRET_NAME, SPACE_APPLICATIONS, manifestForOwner, registryPathFor, renewsAtSignIn } from "./manifests.js";
+import {
+  SESSION_EXPIRATION_MS,
+  SIGN_IN_RENEWAL_ASK,
+  admitSignInRenewal,
+  appSessionStorage,
+  openKeyRenewalClient,
+} from "./renewal.js";
 
 const DEFAULT_HOST = "https://node.tinycloud.xyz";
 const DEFAULT_OPENKEY_HOST = "https://openkey.so";
@@ -12,16 +19,49 @@ const secretsSigners = new WeakMap();
 export const REENTER_API_KEY_MESSAGE =
   "Your saved Anthropic API key can't be read after the TinyCloud update. Please enter your Anthropic API key again in Settings.";
 
+/** Where the apps reach TinyCloud and the OpenKey sign-in, and the SIWE domain they sign in under. */
+export function tinycloudSettings(options = {}) {
+  return {
+    host: options.host || import.meta.env?.VITE_TINYCLOUD_HOST || DEFAULT_HOST,
+    openKeyHost: options.openKeyHost || import.meta.env?.VITE_OPENKEY_HOST || DEFAULT_OPENKEY_HOST,
+    domain: globalThis.window?.location?.hostname || "tinyapps.local",
+  };
+}
+
+/**
+ * Sign in through OpenKey. A renewing app (renewsAtSignIn) also asks OpenKey for a renewal lease and keeps the
+ * session saved so a reload restores it; `options.renews: false` turns that off, nothing turns it on for
+ * another app. The result's `renewsUntil` is the end of the lease the node admitted, or null: without a lease
+ * (unticked at OpenKey, an OpenKey without renewal, a lease that fails its checks or the node's refusal) the
+ * sign-in is finite and nothing is kept for renewal.
+ */
 export async function connectOpenKeyTinyCloud(manifest, options = {}) {
-  const host = options.host || import.meta.env.VITE_TINYCLOUD_HOST || DEFAULT_HOST;
-  const openKeyHost = options.openKeyHost || import.meta.env.VITE_OPENKEY_HOST || DEFAULT_OPENKEY_HOST;
-  const domain = globalThis.window?.location?.hostname || "tinyapps.local";
+  const { host, openKeyHost, domain } = tinycloudSettings(options);
+  const renews = renewsAtSignIn(manifest) && options.renews !== false;
 
   const openkey = refuseNarrowedApproval(
     options.openkey ?? new OpenKey({ host: openKeyHost, appName: manifest.name }),
     manifest,
   );
   const authResult = await openkey.connect();
+
+  // What OpenKey said about renewal, and when it arrived on this device's monotonic clock: the lease is sent
+  // to the node only within a minute of it.
+  let renewalOutcome = {};
+  let renewalArrivedAt;
+  // Renewal needs a sign-in window OpenKey can return a lease through (not redirect) and a session end the
+  // owner may change, within the session length asked for.
+  const openkeySignIn = renews
+    ? {
+        client: openKeyRenewalClient(openkey, SIGN_IN_RENEWAL_ASK, (outcome) => {
+          renewalOutcome = outcome;
+          renewalArrivedAt = performance.now();
+        }),
+        mode: "iframe",
+        expiryChangeable: true,
+        maxExpiresAt: () => Date.now() + SESSION_EXPIRATION_MS,
+      }
+    : { client: openkey, mode: "iframe" };
 
   // Sign-in goes through OpenKey's versioned `authorizeTinyCloud` (config.openkey):
   // OpenKey reviews and signs the session grant. The provider below only answers
@@ -31,8 +71,9 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     tinycloudHosts: [host],
     domain,
     provider: new OpenKeyProvider(openkey, authResult),
-    openkey: { client: openkey, mode: "iframe" },
-    persistSession: false,
+    openkey: openkeySignIn,
+    persistSession: renews,
+    ...(renews ? { sessionExpirationMs: SESSION_EXPIRATION_MS, sessionStorageKeyPrefix: appSessionStorage(manifest).keyPrefix } : {}),
     autoCreateSpace: true,
     spacePrefix: SPACE_APPLICATIONS,
     spaceCreationHandler: new AutoApproveSpaceCreationHandler(),
@@ -42,6 +83,17 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     },
   });
   const session = await tcw.signIn();
+  // OpenKey records the lease but does not send it to the node: the session's node admits it here, else this
+  // sign-in runs to its signed end.
+  const renewsUntil = renews
+    ? await admitSignInRenewal({
+        tcw,
+        manifest,
+        address: authResult.address,
+        renewal: renewalOutcome.renewal,
+        arrivedAt: renewalArrivedAt,
+      })
+    : null;
   // Secrets unlock derives its key from a byte-exact signature, a separate use from sign-in.
   secretsSigners.set(tcw, {
     signMessage: async (message) => (await openkey.signMessage({ message, keyId: authResult.keyId })).signature,
@@ -53,6 +105,7 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     openkey,
     openKeyAddress: authResult.address,
     openKeyKeyId: authResult.keyId,
+    renewsUntil,
   };
 }
 
