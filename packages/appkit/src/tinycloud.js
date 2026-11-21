@@ -69,6 +69,9 @@ export async function connectOpenKeyTinyCloud(manifest, options = {}) {
     persistSession: true,
     sessionStorageKeyPrefix: appSessionStorage(manifest).keyPrefix,
     autoCreateSpace: true,
+    // The apps' production origins are first-party in the SDK's list (scripts/first-party-origins.mjs) so owners
+    // without a location record are not refused; account bootstrap and its registry grants stay off.
+    autoBootstrapAccount: false,
     spacePrefix: SPACE_APPLICATIONS,
     spaceCreationHandler: new AutoApproveSpaceCreationHandler(),
     siweConfig: {
